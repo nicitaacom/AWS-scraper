@@ -14,6 +14,8 @@ declare global {
       ACCESS_KEY_ID: string
       SECRET_ACCESS_KEY: string
       ACCOUNT_ID: string
+
+      OPENAI_KEY: string
     }
   }
 }
