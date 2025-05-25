@@ -1,0 +1,2 @@
+I'm considering creating some Checkbox and then user can get some leads for free but I just put some money to outscraper API
+So user obviously has some limit from me e.g 10$ but user can get it for free

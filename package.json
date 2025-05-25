@@ -1,4 +1,7 @@
 {
+  "scripts": {
+      "build": "tsc && zip -r scraper.zip dist node_modules"
+   },
   "description": "This is created for lambda function to scrape leads",
   "dependencies": {
     "@aws-sdk/client-lambda": "^3.817.0",
@@ -6,6 +9,7 @@
     "@aws-sdk/s3-request-presigner": "^3.816.0",
     "@supabase/supabase-js": "^2.39.0",
     "openai": "^4.98.0",
+    "puppeteer": "^24.9.0",
     "pusher": "^5.2.0",
     "uuid": "^11.1.0"
   },

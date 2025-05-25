@@ -5,8 +5,6 @@ declare global {
       NEXT_PUBLIC_PUSHER_APP_KEY: string
       PUSHER_SECRET: string
 
-      GOOGLE_MAPS_API_KEY: string
-
       NEXT_PUBLIC_SUPABASE_URL: string    
       SUPABASE_SERVICE_ROLE_KEY: string
 
@@ -16,6 +14,14 @@ declare global {
       ACCOUNT_ID: string
 
       OPENAI_KEY: string
+
+      FOURSQUARE_API_KEY: string
+      GOOGLE_CUSTOM_SEARCH_API_KEY: string
+      GOOGLE_CUSTOM_SEARCH_ENGINE_ID: string
+      HUNTER_API_KEY: string
+      SERP_API_KEY: string
+      SEARCH_API_KEY: string
+      TOM_TOM_API_KEY: string
     }
   }
 }
