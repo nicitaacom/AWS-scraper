@@ -12,10 +12,10 @@ const scraper_1 = require("./SDK/scraper");
 const initializeSDK_1 = require("./utils/initializeSDK");
 // Constants
 exports.BUCKET = process.env.S3_BUCKET || "scraper-files-eu-central-1";
-const MAX_RUNTIME_MS = 13 * 60 * 1000; // 13min safe margin for 15min Lambda timeout
-const LEADS_PER_MINUTE = 30; // Conservative estimate: 1 lead per 2 seconds
-const MAX_LEADS_PER_JOB = Math.floor(MAX_RUNTIME_MS / 60000 * LEADS_PER_MINUTE);
-const PROGRESS_UPDATE_INTERVAL = 30000; // Update every 30 seconds
+const MAX_RUNTIME_MS = 13 * 60 * 1000;
+const LEADS_PER_MINUTE = 80 / 3;
+const MAX_LEADS_PER_JOB = Math.floor((MAX_RUNTIME_MS / 60000) * LEADS_PER_MINUTE);
+const PROGRESS_UPDATE_INTERVAL = 30000;
 const MAX_RETRIES = 3;
 const SDK_EMOJIS = {
     duckduckGoSDK: '🦆',
@@ -26,34 +26,24 @@ const SDK_EMOJIS = {
     puppeteerGoogleMapsSDK: '🧠',
     searchSDK: '🔎',
     serpSDK: '📊',
-    tomtomSDK: '🗺️',
+    tomtomSDK: '🗺️'
 };
-/**
- * Safely extracts email from website with comprehensive error handling
- */
 const extractEmailSafely = async (url) => {
     try {
         if (!url.startsWith('http://') && !url.startsWith('https://'))
             url = 'https://' + url;
         const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Email extraction timeout')), 4000));
-        const res = await Promise.race([
-            (0, node_fetch_1.default)(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible; LeadBot/1.0)" }, timeout: 3500 }),
-            timeoutPromise
-        ]);
+        const res = await Promise.race([(0, node_fetch_1.default)(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible; LeadBot/1.0)" }, timeout: 3500 }), timeoutPromise]);
         if (!res.ok)
             return "";
         const html = await res.text();
         const emails = html.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}/g);
-        return emails?.find(e => !/(example|test|placeholder|noreply|no-reply|admin|info@example)/.test(e.toLowerCase()) &&
-            e.length < 50) || "";
+        return emails?.find(e => !/(example|test|placeholder|noreply|no-reply|admin|info@example)/.test(e.toLowerCase()) && e.length < 50) || "";
     }
     catch {
         return "";
     }
 };
-/**
- * Updates progress in database and triggers Pusher event every 30 seconds
- */
 const startProgressUpdater = (id, channelId, getCurrentCount, getCurrentLogs, startTime) => {
     const updateProgress = async () => {
         try {
@@ -71,9 +61,6 @@ const startProgressUpdater = (id, channelId, getCurrentCount, getCurrentLogs, st
     };
     return setInterval(updateProgress, PROGRESS_UPDATE_INTERVAL);
 };
-/**
- * Formats duration in human-readable format
- */
 const formatDuration = (seconds) => {
     if (seconds < 0)
         return "0s";
@@ -82,17 +69,10 @@ const formatDuration = (seconds) => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const remainingSeconds = Math.floor(seconds % 60);
-    return hours > 0
-        ? `${hours}h ${minutes.toString().padStart(2, "0")}m ${remainingSeconds.toString().padStart(2, "0")}s`
-        : `${minutes}m ${remainingSeconds.toString().padStart(2, "0")}s`;
+    return hours > 0 ? `${hours}h ${minutes.toString().padStart(2, "0")}m ${remainingSeconds.toString().padStart(2, "0")}s` : `${minutes}m ${remainingSeconds.toString().padStart(2, "0")}s`;
 };
-/**
- * Check SDK free tier usage and availability
- */
 const checkSDKAvailability = async (supabase) => {
-    const { data: usageData, error } = await supabase
-        .from('sdk_freetier')
-        .select('sdk_name, limit_value, used_count, period_start, period_duration, limit_type');
+    const { data: usageData, error } = await supabase.from('sdk_freetier').select('sdk_name, limit_value, used_count, period_start, period_duration, limit_type');
     if (error)
         return { available: [], unavailable: [], status: `❌ Database error: ${error.message}` };
     const available = [];
@@ -100,22 +80,16 @@ const checkSDKAvailability = async (supabase) => {
     const now = new Date();
     usageData?.forEach((sdk) => {
         const { sdk_name, limit_value, used_count, period_start, period_duration, limit_type } = sdk;
-        // Check if period has expired and should reset
         let currentUsage = used_count;
         if (period_duration && period_start) {
             const periodStartDate = new Date(period_start);
             const periodEndDate = new Date(periodStartDate.getTime());
-            // Add period duration to start date
-            if (limit_type === 'daily') {
+            if (limit_type === 'daily')
                 periodEndDate.setDate(periodEndDate.getDate() + 1);
-            }
-            else if (limit_type === 'monthly') {
+            else if (limit_type === 'monthly')
                 periodEndDate.setMonth(periodEndDate.getMonth() + 1);
-            }
-            // If current time is past period end, usage should be considered 0
-            if (now >= periodEndDate) {
+            if (now >= periodEndDate)
                 currentUsage = 0;
-            }
         }
         const isAvailable = currentUsage < limit_value;
         const statusText = isAvailable ? sdk_name : `${sdk_name} (${currentUsage}/${limit_value})`;
@@ -126,37 +100,27 @@ const checkSDKAvailability = async (supabase) => {
         : `✅ Available: ${available.join(', ')}${unavailable.length ? ` | ❌ Unavailable: ${unavailable.join(', ')}` : ''}`;
     return { available, unavailable, status };
 };
-/**
- * Generate current date in DD.MM format
- */
 const getCurrentDate = () => {
     const now = new Date();
     return `${now.getDate().toString().padStart(2, '0')}.${(now.getMonth() + 1).toString().padStart(2, '0')}`;
 };
-/**
- * Scrape places using multiple SDKs with free tier management and continue until limit is reached
- */
-const scrapePlaces = async (keyword, location, limit, progressCallback, logsCallback, sdks, supabase) => {
+// 🔥 FIXED: Proper retry logic that adds to existing leads instead of restarting
+const scrapePlaces = async (keyword, location, targetLimit, existingLeads = [], // 🆕 Accept existing leads
+progressCallback, logsCallback, sdks, supabase) => {
     let logs = "";
-    let allLeads = [];
+    let allLeads = [...existingLeads]; // 🔥 Start with existing leads
     const seenCompanies = new Set();
+    // 🔥 Pre-populate seen companies to avoid duplicates
+    existingLeads.forEach(lead => {
+        const key = `${lead.company}-${lead.address}`.toLowerCase().trim();
+        seenCompanies.add(key);
+    });
     let attempts = 0;
     const maxAttempts = 8;
-    const sdkOrder = [
-        'duckduckGoSDK',
-        'foursquareSDK',
-        'googleCustomSearchSDK',
-        'hunterSDK',
-        'openCorporatesSDK',
-        'puppeteerGoogleMapsSDK',
-        'searchSDK',
-        'serpSDK',
-        'tomtomSDK'
-    ];
+    const sdkOrder = ['duckduckGoSDK', 'foursquareSDK', 'googleCustomSearchSDK', 'hunterSDK', 'openCorporatesSDK', 'puppeteerGoogleMapsSDK', 'searchSDK', 'serpSDK', 'tomtomSDK'];
     try {
-        while (allLeads.length < limit && attempts < maxAttempts) {
+        while (allLeads.length < targetLimit && attempts < maxAttempts) {
             attempts++;
-            // 🔍 Step 1: Check SDK availability
             const { available, status } = await checkSDKAvailability(supabase);
             logs += `🔍 Attempt ${attempts}: SDK Status: ${status}\n`;
             const availableSDKs = sdkOrder.filter(sdk => available.includes(sdk));
@@ -165,18 +129,15 @@ const scrapePlaces = async (keyword, location, limit, progressCallback, logsCall
                 logsCallback(logs);
                 break;
             }
-            // 🎯 Step 2: Remaining leads
-            const remaining = limit - allLeads.length;
-            logs += `🎯 Need ${remaining} more leads (${allLeads.length}/${limit})\n`;
-            // 🚀 Step 3: SDK order log
+            const remaining = targetLimit - allLeads.length;
+            logs += `🎯 Need ${remaining} more leads (${allLeads.length}/${targetLimit})\n`;
             logs += `🚀 Attempt ${attempts} with ${availableSDKs.length} SDKs: ${availableSDKs.map(s => SDK_EMOJIS[s] + s).join(', ')}\n`;
             logsCallback(logs);
-            // 🔁 Step 4: Scrape with each SDK
             let newLeadsThisAttempt = 0;
             for (const sdkName of availableSDKs) {
-                if (allLeads.length >= limit)
+                if (allLeads.length >= targetLimit)
                     break;
-                const sdkLimit = Math.min(limit - allLeads.length, Math.max(5, Math.ceil(remaining / availableSDKs.length)));
+                const sdkLimit = Math.min(targetLimit - allLeads.length, Math.max(5, Math.ceil(remaining / availableSDKs.length)));
                 try {
                     const sdkStart = Date.now();
                     logs += `${SDK_EMOJIS[sdkName]} ${sdkName}: Starting scrape for ${sdkLimit} leads...\n`;
@@ -191,7 +152,6 @@ const scrapePlaces = async (keyword, location, limit, progressCallback, logsCall
                         logs += `${SDK_EMOJIS[sdkName]} ${sdkName}: ❌ SDK returned error: ${leads}\n`;
                         continue;
                     }
-                    // ✅ Step 5: Dedup leads
                     const newLeads = leads.filter((lead) => {
                         const key = `${lead.company}-${lead.address}`.toLowerCase().trim();
                         if (seenCompanies.has(key))
@@ -199,7 +159,6 @@ const scrapePlaces = async (keyword, location, limit, progressCallback, logsCall
                         seenCompanies.add(key);
                         return true;
                     });
-                    // 📧 Step 6: Extract missing emails
                     let emailsExtracted = 0;
                     for (const lead of newLeads) {
                         if (!lead.email && lead.website) {
@@ -216,7 +175,6 @@ const scrapePlaces = async (keyword, location, limit, progressCallback, logsCall
                     const sdkTime = Math.round((Date.now() - sdkStart) / 1000);
                     logs += `${SDK_EMOJIS[sdkName]} ${sdkName}: ${newLeads.length} leads in ${sdkTime}s${emailsExtracted ? ` (📧 ${emailsExtracted} emails)` : ''}\n`;
                     logsCallback(logs);
-                    // 📊 Step 7: Track SDK usage (no mapping needed)
                     await scraper.updateDBSDKFreeTier({ sdkName, usedCount: leads.length, increment: true });
                 }
                 catch (error) {
@@ -225,17 +183,15 @@ const scrapePlaces = async (keyword, location, limit, progressCallback, logsCall
                     continue;
                 }
             }
-            // 🛑 Step 8: Break if nothing found
             if (newLeadsThisAttempt === 0) {
                 logs += `⚠️ No new leads found in attempt ${attempts}, stopping\n`;
                 break;
             }
-            // ⏱️ Step 9: Wait between attempts
-            if (allLeads.length < limit && attempts < maxAttempts) {
+            if (allLeads.length < targetLimit && attempts < maxAttempts) {
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
         }
-        logs += `🎯 Final results: ${allLeads.length}/${limit} leads after ${attempts} attempts\n`;
+        logs += `🎯 Final results: ${allLeads.length}/${targetLimit} leads after ${attempts} attempts\n`;
         logsCallback(logs);
         return allLeads;
     }
@@ -245,23 +201,39 @@ const scrapePlaces = async (keyword, location, limit, progressCallback, logsCall
         throw error;
     }
 };
-// Initialize clients
 const init = (0, initializeSDK_1.initializeClients)();
 if (typeof init === 'string')
     throw Error(init);
 const { lambda, s3, supabase, pusher, openai, duckduckGoSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, openCorporatesSDK, puppeteerGoogleMapsSDK, searchSDK, serpSDK } = init;
 const scraper = new scraper_1.Scraper(openai, s3, pusher, supabase, lambda);
 const sdks = { duckduckGoSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, openCorporatesSDK, puppeteerGoogleMapsSDK, searchSDK, serpSDK };
-/**
- * Main Lambda handler for lead scraping with regional splitting and comprehensive error handling
- */
+// 🔥 NEW: Helper to load existing CSV from S3 and parse leads
+const loadExistingLeads = async (id) => {
+    try {
+        const { data } = await supabase.from("scraper").select("downloadable_link").eq("id", id).single();
+        if (!data?.downloadable_link)
+            return [];
+        const response = await (0, node_fetch_1.default)(data.downloadable_link);
+        if (!response.ok)
+            return [];
+        const csvText = await response.text();
+        const lines = csvText.split('\n').slice(1); // Skip header
+        return lines.filter(line => line.trim()).map(line => {
+            const [company, address, phone, email, website] = line.split(',').map(cell => cell.replace(/^"|"$/g, '').replace(/""/g, '"'));
+            return { company: company || '', address: address || '', phone: phone || '', email: email || '', website: website || '' };
+        });
+    }
+    catch (error) {
+        console.error('🔥 Failed to load existing leads:', error);
+        return [];
+    }
+};
 const handler = async (event) => {
     const start = Date.now();
     let progressInterval = null;
     let currentLeadsCount = 0;
     let executionLogs = "";
     try {
-        // 1. Validate input payload
         const validation = scraper.validateInput(event);
         if (!validation.valid) {
             executionLogs += `❌ Input validation failed: ${validation.error}\n`;
@@ -275,19 +247,12 @@ const handler = async (event) => {
         const processingType = isChildJob ? 'Child' : 'Parent';
         executionLogs += `🎯 ${processingType} job: "${keyword}" in "${location}" (${limit} leads, retry ${retryCount}/${MAX_RETRIES})\n`;
         console.log(`🎯 ${processingType} job started: "${keyword}" in "${location}" (${limit} leads)`);
-        // 2. Handle unrealistic limits early
         if (limit > 100000 && retryCount === 0) {
             executionLogs += `⚠️ Unrealistic limit detected: ${limit} leads requested\n🔄 Adjusting expectations for location capacity...\n`;
             console.log(`⚠️ Unrealistic limit detected: ${limit} leads`);
-            await scraper.updateDBScraper(id, {
-                message: `⚠️ Very large request (${limit} leads) - this may take time or return fewer results than expected\n${executionLogs}`
-            });
-            await pusher.trigger(channelId, "scraper:update", {
-                id,
-                message: `⚠️ Processing large request (${limit} leads) - please be patient...`
-            });
+            await scraper.updateDBScraper(id, { message: `⚠️ Very large request (${limit} leads) - this may take time or return fewer results than expected\n${executionLogs}` });
+            await pusher.trigger(channelId, "scraper:update", { id, message: `⚠️ Processing large request (${limit} leads) - please be patient...` });
         }
-        // 3. Check SDK availability before processing
         const { available, status: sdkStatus } = await checkSDKAvailability(supabase);
         if (available.length === 0) {
             executionLogs += `❌ All SDKs exhausted: ${sdkStatus}\n`;
@@ -295,7 +260,6 @@ const handler = async (event) => {
             await pusher.trigger(channelId, "scraper:error", { id, error: executionLogs });
             return { statusCode: 429, body: JSON.stringify({ error: executionLogs.trim() }) };
         }
-        // 4. Handle parent job (large request splitting)
         if (!isChildJob && limit > MAX_LEADS_PER_JOB) {
             executionLogs += `📊 Large request detected (${limit} > ${MAX_LEADS_PER_JOB})\n🔄 Initiating regional split...\n`;
             console.log(`📊 Large request detected, splitting into regions...`);
@@ -304,7 +268,6 @@ const handler = async (event) => {
                 const leadsPerRegion = Math.ceil(limit / 4);
                 executionLogs += `📍 Generated regions: ${regions.map(r => `${r.region} (${r.location})`).join(', ')}\n`;
                 executionLogs += `📊 Leads per region: ${leadsPerRegion}\n`;
-                // Create child job records
                 const childJobs = regions.map((r) => ({
                     id: (0, uuid_1.v4)(),
                     keyword,
@@ -323,18 +286,9 @@ const handler = async (event) => {
                     executionLogs += `❌ Database insert failed: ${insertError.message}\n`;
                     throw new Error(`Database insert failed: ${insertError.message}`);
                 }
-                // Invoke child Lambdas
                 const invocationResults = await Promise.allSettled(childJobs.map((job) => {
                     console.log(`🚀 Triggering child Lambda for region: ${job.region}`, { keyword, location: job.location, limit: leadsPerRegion });
-                    return scraper.invokeChildLambda({
-                        keyword,
-                        location: job.location,
-                        limit: leadsPerRegion,
-                        channelId,
-                        id: job.id,
-                        parentId: id,
-                        region: job.region
-                    });
+                    return scraper.invokeChildLambda({ keyword, location: job.location, limit: leadsPerRegion, channelId, id: job.id, parentId: id, region: job.region });
                 }));
                 const successful = invocationResults.filter((r) => r.status === 'fulfilled' && r.value.success).length;
                 if (successful === 0) {
@@ -367,16 +321,25 @@ const handler = async (event) => {
                 throw error;
             }
         }
-        // 5. Handle child job (or small parent job)
+        // 🔥 FIXED: Load existing leads on retry
+        let existingLeads = [];
+        if (retryCount > 0) {
+            existingLeads = await loadExistingLeads(id);
+            executionLogs += `🔄 Retry ${retryCount}: Loading ${existingLeads.length} existing leads\n`;
+            console.log(`🔄 Retry ${retryCount}: Found ${existingLeads.length} existing leads`);
+            currentLeadsCount = existingLeads.length;
+        }
         executionLogs += `📈 Starting progress updates every ${PROGRESS_UPDATE_INTERVAL / 1000}s\n`;
         progressInterval = startProgressUpdater(id, channelId, () => currentLeadsCount, () => executionLogs, start);
         executionLogs += `🔍 Starting lead scraping process...\n`;
         console.log(`🔍 Starting lead scraping process...`);
         const scrapeStart = Date.now();
         try {
-            const leads = await scrapePlaces(keyword, location, limit, (count) => { currentLeadsCount = count; }, (logs) => { executionLogs = logs; }, sdks, supabase);
+            const leads = await scrapePlaces(keyword, location, limit, existingLeads, // 🔥 Pass existing leads
+            (count) => { currentLeadsCount = count; }, (logs) => { executionLogs = logs; }, sdks, supabase);
             const scrapeTime = Math.round((Date.now() - scrapeStart) / 1000);
-            executionLogs += `✅ Scraping completed in ${scrapeTime}s\n📊 Results: ${leads.length}/${limit} leads (${Math.round(leads.length / limit * 100)}%)\n`;
+            const newLeadsFound = leads.length - existingLeads.length;
+            executionLogs += `✅ Scraping completed in ${scrapeTime}s\n📊 Results: ${leads.length}/${limit} leads (+${newLeadsFound} new, ${Math.round(leads.length / limit * 100)}%)\n`;
             console.log(`✅ Scraping completed: ${leads.length}/${limit} leads in ${scrapeTime}s`);
             if (progressInterval) {
                 clearInterval(progressInterval);
@@ -384,23 +347,33 @@ const handler = async (event) => {
             }
             const processingTime = Math.round((Date.now() - start) / 1000);
             const foundRatio = leads.length / limit;
-            // 6. Retry logic for insufficient leads - but cap retries for unrealistic limits
-            const shouldRetry = foundRatio < 0.8 && retryCount < MAX_RETRIES && limit <= 10000;
+            // 🔥 FIXED: Retry logic that considers existing leads
+            const shouldRetry = foundRatio < 0.8 && retryCount < MAX_RETRIES && limit <= 10000 && newLeadsFound > 0;
             if (shouldRetry) {
                 executionLogs += `🔄 Insufficient leads found (${Math.round(foundRatio * 100)}%)\n🔄 Retry ${retryCount + 1}/${MAX_RETRIES} starting...\n`;
                 console.log(`🔄 Insufficient leads, retrying ${retryCount + 1}/${MAX_RETRIES}...`);
-                const retryMessage = `🔄 Retrying (${retryCount + 1}/${MAX_RETRIES}): ${leads.length} leads found\n${executionLogs}`;
+                // Save current progress before retry
+                const header = "Name,Address,Phone,Email,Website";
+                const csvRows = leads.map(lead => [lead.company, lead.address, lead.phone, lead.email, lead.website].map(cell => `"${(cell || '').replace(/"/g, '""')}"`).join(","));
+                const csv = [header, ...csvRows].join("\n");
+                const tempFileName = `temp_${id}_retry_${retryCount}.csv`;
+                await s3.send(new client_s3_1.PutObjectCommand({
+                    Bucket: exports.BUCKET,
+                    Key: tempFileName,
+                    Body: csv,
+                    ContentType: "text/csv"
+                }));
+                const tempDownloadUrl = await (0, s3_request_presigner_1.getSignedUrl)(s3, new client_s3_1.GetObjectCommand({ Bucket: exports.BUCKET, Key: tempFileName }), { expiresIn: 3600 });
+                await scraper.updateDBScraper(id, { downloadable_link: tempDownloadUrl, leads_count: leads.length });
+                const retryMessage = `🔄 Retrying (${retryCount + 1}/${MAX_RETRIES}): ${leads.length} leads found, searching for more...\n${executionLogs}`;
                 await scraper.updateDBScraper(id, { message: retryMessage });
                 await pusher.trigger(channelId, "scraper:update", { id, message: retryMessage });
                 return (0, exports.handler)({ ...event, retryCount: retryCount + 1 });
             }
-            // 7. Generate and upload CSV
             executionLogs += `📄 Generating CSV file...\n`;
             console.log(`📄 Generating CSV file...`);
             const header = "Name,Address,Phone,Email,Website";
-            const csvRows = leads.map(lead => [lead.company, lead.address, lead.phone, lead.email, lead.website]
-                .map(cell => `"${(cell || '').replace(/"/g, '""')}"`)
-                .join(","));
+            const csvRows = leads.map(lead => [lead.company, lead.address, lead.phone, lead.email, lead.website].map(cell => `"${(cell || '').replace(/"/g, '""')}"`).join(","));
             const csv = [header, ...csvRows].join("\n");
             const fileName = `${limit}_${keyword.replace(/\W+/g, '-')}_${location.replace(/\W+/g, '-')}-${getCurrentDate()}${jobRegion ? `_${jobRegion}` : ''}.csv`;
             await s3.send(new client_s3_1.PutObjectCommand({
@@ -412,7 +385,6 @@ const handler = async (event) => {
             }));
             const downloadUrl = await (0, s3_request_presigner_1.getSignedUrl)(s3, new client_s3_1.GetObjectCommand({ Bucket: exports.BUCKET, Key: fileName }), { expiresIn: 86400 });
             executionLogs += `💾 Uploaded to S3: ${fileName} (${csvRows.length + 1} rows)\n`;
-            // 8. Update database with completion status
             const isUnrealisticRequest = limit > 10000 && foundRatio < 0.3;
             const completionMessage = isUnrealisticRequest
                 ? `⚠️ Large request completed: ${leads.length} leads found (${location} may not have ${limit} "${keyword}" businesses)`
@@ -426,28 +398,17 @@ const handler = async (event) => {
                 message: finalMessage
             });
             console.log(`✅ Job completed: ${leads.length}/${limit} leads in ${processingTime}s`);
-            // 9. Handle child job completion
             if (isChildJob && parentId) {
                 console.log(`🔗 Child job completed, updating parent progress...`);
-                // Aggregate child job progress for parent
-                const { data: childJobs, error: fetchError } = await supabase
-                    .from("scraper")
-                    .select("id, status, leads_count, message")
-                    .eq("parent_id", parentId);
+                const { data: childJobs, error: fetchError } = await supabase.from("scraper").select("id, status, leads_count, message").eq("parent_id", parentId);
                 if (!fetchError && childJobs) {
                     const completedCount = childJobs.filter(job => job.status === "completed").length;
                     const totalLeads = childJobs.reduce((sum, job) => sum + job.leads_count, 0);
                     const totalRegions = childJobs.length;
-                    // Combine SDK performance from all completed children
-                    const sdkPerformance = childJobs
-                        .filter(job => job.status === "completed")
-                        .map(job => job.message?.split('\n').filter((line) => line.includes('leads in') && line.includes('s')).join('\n'))
-                        .filter(Boolean)
-                        .join('\n');
+                    const sdkPerformance = childJobs.filter(job => job.status === "completed").map(job => job.message?.split('\n').filter((line) => line.includes('leads in') && line.includes('s')).join('\n')).filter(Boolean).join('\n');
                     const parentMessage = `🎯 ${completedCount}/${totalRegions} regions completed, ${totalLeads} leads collected\n\n📊 SDK Performance:\n${sdkPerformance}`;
                     await scraper.updateDBScraper(parentId, { leads_count: totalLeads, message: parentMessage });
                     await pusher.trigger(channelId, "scraper:update", { id: parentId, leads_count: totalLeads, message: parentMessage });
-                    // Schedule merge if all children are complete
                     if (completedCount === totalRegions) {
                         console.log(`🔗 All child jobs completed, scheduling merge...`);
                         setTimeout(() => scraper.checkAndMergeResults(parentId, channelId, exports.BUCKET), 5000);
@@ -467,10 +428,9 @@ const handler = async (event) => {
                 };
             }
             else {
-                // 10. Handle small parent job completion
                 const statusCode = foundRatio < 0.8 ? 206 : 200;
                 const responseMessage = foundRatio < 0.8
-                    ? (isUnrealisticRequest ? "⚠️ Location may not have enough businesses of this type" : "⚠️ Not enough leads in this location")
+                    ? (isUnrealisticRequest ? "⚠️ Location may not have enough businesses of this type" : "⚠️ Not enough leads found after ${MAX_RETRIES} attempts")
                     : "✅ Scraping completed successfully";
                 await pusher.trigger(channelId, "scraper:completed", {
                     id,
