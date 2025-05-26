@@ -14,7 +14,6 @@ const FoursquareSDK_1 = require("../SDK/FoursquareSDK");
 const GoogleCustomSearchSDK_1 = require("../SDK/GoogleCustomSearchSDK");
 const HunterSDK_1 = require("../SDK/HunterSDK");
 const OpenCorporatesSDK_1 = require("../SDK/OpenCorporatesSDK");
-const PuppeteerGoogleMapsSDK_1 = require("../SDK/PuppeteerGoogleMapsSDK");
 const SearchSDK_1 = require("../SDK/SearchSDK");
 const SerpSDK_1 = require("../SDK/SerpSDK");
 const TomTomSDK_1 = require("../SDK/TomTomSDK");
@@ -47,7 +46,6 @@ function initializeClients() {
             googleCustomSearchSDK: new GoogleCustomSearchSDK_1.GoogleCustomSearchSDK(process.env.GOOGLE_CUSTOM_SEARCH_API_KEY, process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID),
             hunterSDK: new HunterSDK_1.HunterSDK(process.env.HUNTER_API_KEY),
             openCorporatesSDK: new OpenCorporatesSDK_1.OpenCorporatesSDK(),
-            puppeteerGoogleMapsSDK: new PuppeteerGoogleMapsSDK_1.PuppeteerGoogleMapsSDK(),
             searchSDK: new SearchSDK_1.SearchSDK(process.env.SEARCH_API_KEY),
             serpSDK: new SerpSDK_1.SerpSDK(process.env.SERP_API_KEY),
             tomtomSDK: new TomTomSDK_1.TomTomSDK(process.env.TOM_TOM_API_KEY),

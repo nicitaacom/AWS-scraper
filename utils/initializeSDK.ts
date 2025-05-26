@@ -8,7 +8,6 @@ import { FoursquareSDK } from "../SDK/FoursquareSDK";
 import { GoogleCustomSearchSDK } from "../SDK/GoogleCustomSearchSDK";
 import { HunterSDK } from "../SDK/HunterSDK";
 import { OpenCorporatesSDK } from "../SDK/OpenCorporatesSDK";
-import { PuppeteerGoogleMapsSDK } from "../SDK/PuppeteerGoogleMapsSDK";
 import { SearchSDK } from "../SDK/SearchSDK";
 import { SerpSDK } from "../SDK/SerpSDK";
 import { TomTomSDK } from "../SDK/TomTomSDK";
@@ -48,7 +47,6 @@ export function initializeClients() {
       googleCustomSearchSDK: new GoogleCustomSearchSDK(process.env.GOOGLE_CUSTOM_SEARCH_API_KEY,process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID),
       hunterSDK: new HunterSDK(process.env.HUNTER_API_KEY),
       openCorporatesSDK: new OpenCorporatesSDK(),
-      puppeteerGoogleMapsSDK: new PuppeteerGoogleMapsSDK(),
       searchSDK: new SearchSDK(process.env.SEARCH_API_KEY),
       serpSDK: new SerpSDK(process.env.SERP_API_KEY),
       tomtomSDK: new TomTomSDK(process.env.TOM_TOM_API_KEY),

@@ -23,7 +23,6 @@ const SDK_EMOJIS = {
     googleCustomSearchSDK: '🌐',
     hunterSDK: '🕵️',
     openCorporatesSDK: '🏢',
-    puppeteerGoogleMapsSDK: '🧠',
     searchSDK: '🔎',
     serpSDK: '📊',
     tomtomSDK: '🗺️'
@@ -117,7 +116,7 @@ progressCallback, logsCallback, sdks, supabase) => {
     });
     let attempts = 0;
     const maxAttempts = 8;
-    const sdkOrder = ['duckduckGoSDK', 'foursquareSDK', 'googleCustomSearchSDK', 'hunterSDK', 'openCorporatesSDK', 'puppeteerGoogleMapsSDK', 'searchSDK', 'serpSDK', 'tomtomSDK'];
+    const sdkOrder = ['duckduckGoSDK', 'foursquareSDK', 'googleCustomSearchSDK', 'hunterSDK', 'openCorporatesSDK', 'searchSDK', 'serpSDK', 'tomtomSDK'];
     try {
         while (allLeads.length < targetLimit && attempts < maxAttempts) {
             attempts++;
@@ -204,9 +203,9 @@ progressCallback, logsCallback, sdks, supabase) => {
 const init = (0, initializeSDK_1.initializeClients)();
 if (typeof init === 'string')
     throw Error(init);
-const { lambda, s3, supabase, pusher, openai, duckduckGoSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, openCorporatesSDK, puppeteerGoogleMapsSDK, searchSDK, serpSDK } = init;
+const { lambda, s3, supabase, pusher, openai, duckduckGoSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, openCorporatesSDK, searchSDK, serpSDK } = init;
 const scraper = new scraper_1.Scraper(openai, s3, pusher, supabase, lambda);
-const sdks = { duckduckGoSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, openCorporatesSDK, puppeteerGoogleMapsSDK, searchSDK, serpSDK };
+const sdks = { duckduckGoSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, openCorporatesSDK, searchSDK, serpSDK };
 // 🔥 NEW: Helper to load existing CSV from S3 and parse leads
 const loadExistingLeads = async (id) => {
     try {

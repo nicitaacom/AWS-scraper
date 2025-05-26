@@ -4,9 +4,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PuppeteerGoogleMapsSDK = void 0;
-const puppeteer_1 = __importDefault(require("puppeteer"));
+const puppeteer_core_1 = __importDefault(require("puppeteer-core"));
+const chromium_1 = __importDefault(require("@sparticuz/chromium"));
 const node_fetch_1 = __importDefault(require("node-fetch"));
-const child_process_1 = require("child_process");
 class PuppeteerGoogleMapsSDK {
     userAgents = [
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -14,39 +14,8 @@ class PuppeteerGoogleMapsSDK {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0'
     ];
     proxyList = [];
-    chromeInstalled = false;
     constructor() {
         this.initProxyList();
-        this.ensureChromeInstalled();
-    }
-    // 🔧 Ensure Chrome is installed before any operations
-    async ensureChromeInstalled() {
-        try {
-            // Check if Chrome is already available
-            const browser = await puppeteer_1.default.launch({ headless: true });
-            await browser.close();
-            this.chromeInstalled = true;
-            console.log("✅ Chrome browser is available");
-        }
-        catch (error) {
-            console.log("⏳ Chrome not found, installing...");
-            try {
-                // Install Chrome using puppeteer
-                (0, child_process_1.execSync)('npx puppeteer browsers install chrome', {
-                    stdio: 'inherit',
-                    timeout: 300000 // 5 minutes timeout
-                });
-                // Verify installation
-                const browser = await puppeteer_1.default.launch({ headless: true });
-                await browser.close();
-                this.chromeInstalled = true;
-                console.log("✅ Chrome successfully installed");
-            }
-            catch (installError) {
-                console.error("❌ Failed to install Chrome:", installError);
-                throw new Error("Chrome installation failed. Please run 'npx puppeteer browsers install chrome' manually.");
-            }
-        }
     }
     // 🔐 Step 1: Fetch proxy list with fallback
     async initProxyList() {
@@ -55,51 +24,37 @@ class PuppeteerGoogleMapsSDK {
                 timeout: 10000
             });
             const raw = await res.text();
-            this.proxyList = raw.split("\n").map(p => p.trim()).filter(p => p.length > 0);
+            this.proxyList = raw.split("\n").map(p => p.trim()).filter(Boolean);
             console.log(`📡 Loaded ${this.proxyList.length} proxies`);
         }
-        catch (error) {
-            console.warn("⚠️ Failed to fetch proxies, continuing without proxy rotation:", error instanceof Error ? error.message : String(error));
+        catch (err) {
+            console.warn("⚠️ Failed to fetch proxies:", err instanceof Error ? err.message : String(err));
             this.proxyList = [];
         }
     }
-    /**
-     * Search for businesses on Google Maps with guaranteed contact info
-     * @param query Search term
-     * @param location Search location
-     * @param limit Max number of leads
-     */
     async searchBusinesses(query, location, limit = 20) {
-        if (!this.chromeInstalled) {
-            await this.ensureChromeInstalled();
-        }
         const browser = await this.launchBrowser();
         try {
             const page = await this.setupPage(browser);
             const url = `https://www.google.com/maps/search/${encodeURIComponent(`${query} ${location}`)}`;
             console.log(`🔍 Searching: ${query} in ${location}`);
             await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-            // Wait for results with multiple fallback selectors
             await this.waitForResults(page);
             await this.scrollToLoadResults(page, limit);
             let leads = await this.extractLeads(page, limit);
             console.log(`📋 Extracted ${leads.length} initial leads`);
-            // CRITICAL: Ensure every lead has contact info
             leads = await this.enrichLeadsWithContactInfo(leads, browser);
-            // Filter out leads without contact info
             const validLeads = leads.filter(lead => lead.email || lead.phone);
-            if (!validLeads.length)
-                return "No businesses found with contact information for the given query.";
-            if (validLeads.length < Math.min(limit, 10)) {
-                console.warn(`⚠️ Expected ${limit} results but got ${validLeads.length} with contact info`);
-            }
-            console.log(`✅ Returning ${validLeads.length} leads with contact information`);
-            return validLeads;
+            return !validLeads.length
+                ? "No businesses found with contact information for the given query."
+                : validLeads.length < Math.min(limit, 10)
+                    ? (console.warn(`⚠️ Expected ${limit} results but got ${validLeads.length} with contact info`), validLeads)
+                    : validLeads;
         }
-        catch (error) {
-            const errorMsg = error instanceof Error ? error.message : String(error);
-            console.error("❌ Google Maps scraping failed:", errorMsg);
-            return `Google Maps scraping failed: ${errorMsg}`;
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error("❌ Google Maps scraping failed:", msg);
+            return `Google Maps scraping failed: ${msg}`;
         }
         finally {
             await browser.close();
@@ -128,68 +83,93 @@ class PuppeteerGoogleMapsSDK {
             throw new Error("No search results found on Google Maps");
         }
     }
-    // ⚙️ Launch headless browser with retry logic
+    // 1️⃣ Launch headless browser with retry & SOLID helpers
     async launchBrowser() {
-        const maxRetries = 3;
-        for (let i = 0; i < maxRetries; i++) {
+        const retries = 3;
+        for (let i = 0; i < retries; i++) {
             try {
-                const proxyArg = this.proxyList.length && Math.random() > 0.5
-                    ? `--proxy-server=${this.proxyList[Math.floor(Math.random() * this.proxyList.length)]}`
-                    : "";
-                const baseArgs = [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu',
-                    '--no-first-run',
-                    '--no-zygote',
-                    '--disable-features=VizDisplayCompositor',
-                    '--disable-extensions',
-                    '--disable-plugins',
-                    '--disable-images'
-                ];
-                const args = proxyArg ? [...baseArgs, proxyArg] : baseArgs;
-                return await puppeteer_1.default.launch({
-                    headless: true,
+                const args = this.buildLaunchArgs();
+                return await puppeteer_core_1.default.launch({
+                    headless: chromium_1.default.headless,
                     args,
-                    timeout: 30000
+                    executablePath: await chromium_1.default.executablePath(),
+                    defaultViewport: chromium_1.default.defaultViewport,
+                    // @ts-expect-error
+                    ignoreHTTPSErrors: true,
+                    timeout: 30_000
                 });
             }
-            catch (error) {
-                if (i === maxRetries - 1)
-                    throw error;
-                console.warn(`Browser launch attempt ${i + 1} failed, retrying...`);
-                await this.delay(2000);
+            catch (err) {
+                if (i === retries - 1)
+                    throw err;
+                console.warn(`Launch attempt ${i + 1} failed, retrying…`);
+                await this.delay(2_000);
             }
         }
         throw new Error("Failed to launch browser after multiple attempts");
     }
-    // 🧱 Setup new page with enhanced blocking and stealth
+    // 2️⃣ Build launch args (single responsibility)
+    buildLaunchArgs() {
+        const base = [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--no-first-run",
+            "--no-zygote",
+            "--disable-extensions",
+            "--disable-plugins",
+            "--disable-features=VizDisplayCompositor"
+        ];
+        return this.shouldUseProxy()
+            ? [...base, `--proxy-server=${this.getRandomProxy()}`]
+            : base;
+    }
+    // 3️⃣ Decide if we inject a proxy
+    shouldUseProxy() {
+        return this.proxyList.length > 0 && Math.random() > 0.5;
+    }
+    // 4️⃣ Pick a random proxy
+    getRandomProxy() {
+        return this.proxyList[Math.floor(Math.random() * this.proxyList.length)];
+    }
+    // 5️⃣ Simple delay helper
+    delay(ms) {
+        return new Promise(res => setTimeout(res, ms));
+    }
+    // 🔍 Setup new page: viewport, UA, blocking & headers
     async setupPage(browser) {
         const page = await browser.newPage();
-        await page.setViewport({ width: 1366, height: 768 });
-        await page.setUserAgent(this.userAgents[Math.floor(Math.random() * this.userAgents.length)]);
-        // Block unnecessary resources to speed up
-        await page.setRequestInterception(true);
-        page.on('request', req => {
-            const blockTypes = ['stylesheet', 'image', 'font', 'media'];
-            const url = req.url();
-            if (blockTypes.includes(req.resourceType()) ||
-                url.includes('google-analytics') ||
-                url.includes('googletagmanager') ||
-                url.includes('doubleclick')) {
-                req.abort();
-            }
-            else {
-                req.continue();
-            }
-        });
-        // Add extra headers for legitimacy
-        await page.setExtraHTTPHeaders({
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
-        });
+        await Promise.all([
+            page.setViewport({ width: 1366, height: 768 }),
+            page.setUserAgent(this.getRandomUserAgent()),
+            page.setRequestInterception(true)
+        ]);
+        page.on("request", req => this.handleRequest(req));
+        await page.setExtraHTTPHeaders(this.getExtraHeaders());
         return page;
+    }
+    // 6️⃣ Get random UA (SRP)
+    getRandomUserAgent() {
+        return this.userAgents[Math.floor(Math.random() * this.userAgents.length)];
+    }
+    // 7️⃣ Decide which requests to block
+    handleRequest(req) {
+        const block = ["stylesheet", "image", "font", "media"];
+        const url = req.url();
+        if (block.includes(req.resourceType()) ||
+            /google-analytics|googletagmanager|doubleclick/.test(url)) {
+            req.abort();
+        }
+        else
+            req.continue();
+    }
+    // 8️⃣ Centralize extra headers
+    getExtraHeaders() {
+        return {
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        };
     }
     // 🔁 Enhanced scrolling with dynamic detection
     async scrollToLoadResults(page, limit) {
@@ -470,9 +450,6 @@ class PuppeteerGoogleMapsSDK {
             }
         }
         return {};
-    }
-    delay(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
     }
 }
 exports.PuppeteerGoogleMapsSDK = PuppeteerGoogleMapsSDK;

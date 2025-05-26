@@ -209,6 +209,7 @@ DO NOT USE list:
  3. HereSDK because it ask to link a card - so it's not going to be free
  4. NominatimSDK require card to get API key
  5. YelpSDK because it's not free
+ 6. PuppeteerGoogleMapsSDK because it's Runtime.OutOfMemory and max size is 50MB (86MB)
 
 
 [INCLUDE 1 EXAMPLE OF SDK HERE]
