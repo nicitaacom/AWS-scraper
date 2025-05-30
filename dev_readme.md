@@ -40,6 +40,7 @@ You're building a lead scraper Lambda function.
 6. If function fails (error) - return string with error message and then check if function returned typeof === 'string' then throw Error 
 7. If any TODO of FIX in code you need to fix it or do something that is written in commented TODO line
 
+
 **Code architecture**
 ## Current SQL structure
 
@@ -67,8 +68,8 @@ create table public.scraper (
   CREATE TABLE IF NOT EXISTS public.sdk_freetier (
     sdk_name TEXT PRIMARY KEY,
     limit_type TEXT NOT NULL CHECK (limit_type IN ('monthly', 'daily', 'minute', 'fixed')),
-    limit_value INTEGER NOT NULL,
     used_count INTEGER NOT NULL DEFAULT 0,
+    limit_value INTEGER NOT NULL,
     period_start TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     period_duration INTERVAL, -- 🔒 NULL = no reset (used by 'fixed')
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -83,7 +84,6 @@ create table public.scraper (
     ('google',          'monthly', 10000, INTERVAL '30 days'),
     ('hunter',          'monthly', 500,   INTERVAL '30 days'),
     ('opencorporates',  'monthly', 200,   INTERVAL '30 days'),
-    ('puppeteer',       'monthly', 1000,  INTERVAL '30 days'),
     ('search',          'monthly', 100,   INTERVAL '30 days'),
     ('serp',            'monthly', 100,   INTERVAL '30 days'),
     ('tomtom',          'daily',   2500,  INTERVAL '1 day')
@@ -170,6 +170,10 @@ Here is all interfaces and types
 [PASTE FROM interfaces.ts]
 ```
 
+Here is index.ts
+[PASTE]
+
+
 **Output**: Optimized, readable, production-grade Lambda handler with JSDoc for handler function that explains what it does
 
 
@@ -201,7 +205,7 @@ import { scrapeEmailFromWebsite } from "../utils/scrapeEmailFromWebsite"
 Include clear comments (//1. do sth), use one-line concise code & ternaries, and avoid tiny abbreviations like idx, ctx, or e.
 Make sure phone numbers does not include spaces slashes dashes or any other symbols - it must be numbers only including country code e.g "441642296631"
 
-Existing SDKs: FoursquareSDK,GoogleCustomSearchSDK,MapBoxSDK,NominatimSDK,OpenCorporatesSDK,PuppeteerGoogleMapsSDK,TomTomSDK
+Existing SDKs: FoursquareSDK,GoogleCustomSearchSDK,MapBoxSDK,NominatimSDK,OpenCorporatesSDK,TomTomSDK
 DO NOT USE list:
  1. BingSearchSDK  because "Product to be retired Bing Search and Bing Custom Search APIs will be retired on 11th August 2025"
  2. ClearbitSDK because ❗API keys are available for Clearbit accounts created in 2023 and earlier. If you signed up in 2024,

@@ -3,11 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PuppeteerGoogleMapsSDK = void 0;
-const puppeteer_core_1 = __importDefault(require("puppeteer-core"));
-const chromium_1 = __importDefault(require("@sparticuz/chromium"));
 const node_fetch_1 = __importDefault(require("node-fetch"));
-class PuppeteerGoogleMapsSDK {
     userAgents = [
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -89,15 +85,7 @@ class PuppeteerGoogleMapsSDK {
         for (let i = 0; i < retries; i++) {
             try {
                 const args = this.buildLaunchArgs();
-                return await puppeteer_core_1.default.launch({
-                    headless: chromium_1.default.headless,
-                    args,
-                    executablePath: await chromium_1.default.executablePath(),
-                    defaultViewport: chromium_1.default.defaultViewport,
-                    // @ts-expect-error
-                    ignoreHTTPSErrors: true,
-                    timeout: 30_000
-                });
+            
             }
             catch (err) {
                 if (i === retries - 1)
@@ -452,4 +440,3 @@ class PuppeteerGoogleMapsSDK {
         return {};
     }
 }
-exports.PuppeteerGoogleMapsSDK = PuppeteerGoogleMapsSDK;

@@ -20,6 +20,7 @@ class DuckDuckGoSDK {
             return "Recommended limit is 50 for performance";
         try {
             // 2. Construct search query
+            // e.g https://api.duckduckgo.com/?q=123&format=json&no_html=1&skip_disambig=1
             const q = `${query} ${location} business contact`;
             const url = `${this.endpoint}?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`;
             // 3. Fetch data

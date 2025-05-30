@@ -9,6 +9,8 @@ import { v4 as uuidv4 } from "uuid"
 import { Job, JobPayload, Lead } from "./interfaces/interfaces"
 import { Scraper } from "./SDK/scraper"
 import { initializeClients } from "./utils/initializeSDK"
+import { extractEmailSafely } from "./utils/extractEmailSafely"
+import { formatDuration, getCurrentDate } from "./utils/date-utils"
 
 // Constants
 export const BUCKET = process.env.S3_BUCKET || "scraper-files-eu-central-1"
@@ -24,6 +26,7 @@ interface SDKs {
   googleCustomSearchSDK: string
   hunterSDK: string
   openCorporatesSDK: string
+  puppeteerGoogleMapsSDK: string
   searchSDK: string
   serpSDK: string
   tomtomSDK: string
@@ -36,23 +39,10 @@ const SDK_EMOJIS: SDKs = {
   googleCustomSearchSDK: '🌐',
   hunterSDK: '🕵️',
   openCorporatesSDK: '🏢',
+  puppeteerGoogleMapsSDK: '🧠',
   searchSDK: '🔎',
   serpSDK: '📊',
   tomtomSDK: '🗺️'
-}
-
-const extractEmailSafely = async (url: string): Promise<string> => {
-  try {
-    if (!url.startsWith('http://') && !url.startsWith('https://')) url = 'https://' + url
-    const timeoutPromise = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Email extraction timeout')), 4000))
-    const res = await Promise.race([fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible; LeadBot/1.0)" }, timeout: 3500 }), timeoutPromise])
-    if (!res.ok) return ""
-    const html = await res.text()
-    const emails = html.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}/g)
-    return emails?.find(e => !/(example|test|placeholder|noreply|no-reply|admin|info@example)/.test(e.toLowerCase()) && e.length < 50) || ""
-  } catch {
-    return ""
-  }
 }
 
 const startProgressUpdater = (id: string, channelId: string, getCurrentCount: () => number, getCurrentLogs: () => string, startTime: number) => {
@@ -72,21 +62,18 @@ const startProgressUpdater = (id: string, channelId: string, getCurrentCount: ()
   return setInterval(updateProgress, PROGRESS_UPDATE_INTERVAL)
 }
 
-const formatDuration = (seconds: number): string => {
-  if (seconds < 0) return "0s"
-  if (seconds < 60) return `${Math.floor(seconds)}s`
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  const remainingSeconds = Math.floor(seconds % 60)
-  return hours > 0 ? `${hours}h ${minutes.toString().padStart(2, "0")}m ${remainingSeconds.toString().padStart(2, "0")}s` : `${minutes}m ${remainingSeconds.toString().padStart(2, "0")}s`
-}
-
-const checkSDKAvailability = async (supabase: any): Promise<{ available: string[], unavailable: string[], status: string }> => {
+const checkSDKAvailability = async (supabase: any): Promise<{ 
+  available: string[], 
+  unavailable: string[], 
+  status: string,
+  sdkLimits: Record<string, { available: number, total: number }> 
+}> => {
   const { data: usageData, error } = await supabase.from('sdk_freetier').select('sdk_name, limit_value, used_count, period_start, period_duration, limit_type')
-  if (error) return { available: [], unavailable: [], status: `❌ Database error: ${error.message}` }
+  if (error) return { available: [], unavailable: [], status: `❌ Database error: ${error.message}`, sdkLimits: {} }
 
   const available: string[] = []
   const unavailable: string[] = []
+  const sdkLimits: Record<string, { available: number, total: number }> = {}
   const now = new Date()
 
   usageData?.forEach((sdk: any) => {
@@ -101,7 +88,11 @@ const checkSDKAvailability = async (supabase: any): Promise<{ available: string[
       if (now >= periodEndDate) currentUsage = 0
     }
     
-    const isAvailable = currentUsage < limit_value
+    const availableCount = Math.max(0, limit_value - currentUsage)
+    const isAvailable = availableCount > 0
+    
+    sdkLimits[sdk_name] = { available: availableCount, total: limit_value }
+    
     const statusText = isAvailable ? sdk_name : `${sdk_name} (${currentUsage}/${limit_value})`
     ;(isAvailable ? available : unavailable).push(statusText)
   })
@@ -110,30 +101,24 @@ const checkSDKAvailability = async (supabase: any): Promise<{ available: string[
     ? `❌ All SDKs exhausted: ${unavailable.join(', ')}`
     : `✅ Available: ${available.join(', ')}${unavailable.length ? ` | ❌ Unavailable: ${unavailable.join(', ')}` : ''}`
 
-  return { available, unavailable, status }
+  return { available, unavailable, status, sdkLimits }
 }
 
-const getCurrentDate = (): string => {
-  const now = new Date()
-  return `${now.getDate().toString().padStart(2, '0')}.${(now.getMonth() + 1).toString().padStart(2, '0')}`
-}
-
-// 🔥 FIXED: Proper retry logic that adds to existing leads instead of restarting
 const scrapePlaces = async (
   keyword: string,
   location: string,
   targetLimit: number,
-  existingLeads: Lead[] = [], // 🆕 Accept existing leads
+  existingLeads: Lead[] = [],
   progressCallback: (count: number) => void,
   logsCallback: (logs: string) => void,
   sdks: Record<string, any>,
   supabase: any
 ): Promise<Lead[]> => {
   let logs = ""
-  let allLeads: Lead[] = [...existingLeads] // 🔥 Start with existing leads
+  let allLeads: Lead[] = [...existingLeads]
   const seenCompanies = new Set<string>()
   
-  // 🔥 Pre-populate seen companies to avoid duplicates
+  // Pre-populate seen companies to avoid duplicates
   existingLeads.forEach(lead => {
     const key = `${lead.company}-${lead.address}`.toLowerCase().trim()
     seenCompanies.add(key)
@@ -141,12 +126,12 @@ const scrapePlaces = async (
 
   let attempts = 0
   const maxAttempts = 8
-  const sdkOrder = ['duckduckGoSDK', 'foursquareSDK', 'googleCustomSearchSDK', 'hunterSDK', 'openCorporatesSDK', 'searchSDK', 'serpSDK', 'tomtomSDK']
+  const sdkOrder = ['duckduckGoSDK', 'foursquareSDK', 'googleCustomSearchSDK', 'hunterSDK', 'openCorporatesSDK', 'puppeteerGoogleMapsSDK', 'searchSDK', 'serpSDK', 'tomtomSDK']
 
   try {
     while (allLeads.length < targetLimit && attempts < maxAttempts) {
       attempts++
-      const { available, status } = await checkSDKAvailability(supabase)
+      const { available, status, sdkLimits } = await checkSDKAvailability(supabase)
       logs += `🔍 Attempt ${attempts}: SDK Status: ${status}\n`
 
       const availableSDKs = sdkOrder.filter(sdk => available.includes(sdk))
@@ -157,14 +142,58 @@ const scrapePlaces = async (
       }
 
       const remaining = targetLimit - allLeads.length
+      
+      // Smart SDK limit distribution
+      const sdkDistribution: Record<string, number> = {}
+      let totalAllocated = 0
+      
+      // Calculate base allocation per SDK
+      const basePerSDK = Math.floor(remaining / availableSDKs.length)
+      
+      // First pass: allocate what each SDK can handle
+      availableSDKs.forEach(sdkName => {
+        const maxAvailable = sdkLimits[sdkName]?.available || 0
+        const allocation = Math.min(basePerSDK, maxAvailable)
+        sdkDistribution[sdkName] = allocation
+        totalAllocated += allocation
+      })
+      
+      // Second pass: distribute remaining leads to SDKs with capacity
+      let remainingToDistribute = remaining - totalAllocated
+      while (remainingToDistribute > 0) {
+        let distributed = false
+        for (const sdkName of availableSDKs) {
+          if (remainingToDistribute <= 0) break
+          const maxAvailable = sdkLimits[sdkName]?.available || 0
+          const currentAllocation = sdkDistribution[sdkName] || 0
+          if (currentAllocation < maxAvailable) {
+            const canAdd = Math.min(remainingToDistribute, maxAvailable - currentAllocation)
+            sdkDistribution[sdkName] += canAdd
+            remainingToDistribute -= canAdd
+            totalAllocated += canAdd
+            distributed = true
+          }
+        }
+        if (!distributed) break
+      }
+
+      // Generate distribution summary
+      const distributionSummary = availableSDKs.map(sdk => {
+        const allocation = sdkDistribution[sdk] || 0
+        const available = sdkLimits[sdk]?.available || 0
+        return `${allocation}${allocation !== available && available < 50 ? `(${available} max)` : ''}`
+      }).join('+')
+      
+      const actualTotal = Object.values(sdkDistribution).reduce((sum, val) => sum + val, 0)
       logs += `🎯 Need ${remaining} more leads (${allLeads.length}/${targetLimit})\n`
-      logs += `🚀 Attempt ${attempts} with ${availableSDKs.length} SDKs: ${availableSDKs.map(s => SDK_EMOJIS[s] + s).join(', ')}\n`
+      logs += `🚀 Attempt ${attempts} with ${availableSDKs.length} SDKs (${distributionSummary}=${actualTotal}): ${availableSDKs.map(s => SDK_EMOJIS[s] + s).join(', ')}\n`
       logsCallback(logs)
 
       let newLeadsThisAttempt = 0
       for (const sdkName of availableSDKs) {
         if (allLeads.length >= targetLimit) break
-        const sdkLimit = Math.min(targetLimit - allLeads.length, Math.max(5, Math.ceil(remaining / availableSDKs.length)))
+        const sdkLimit = sdkDistribution[sdkName] || 0
+        if (sdkLimit <= 0) continue
 
         try {
           const sdkStart = Date.now()
@@ -239,12 +268,13 @@ const scrapePlaces = async (
 
 const init = initializeClients()
 if (typeof init === 'string') throw Error(init)
-const { lambda, s3, supabase, pusher, openai, duckduckGoSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, openCorporatesSDK, searchSDK, serpSDK } = init
+const { lambda, s3, supabase, pusher, openai, duckduckGoSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, openCorporatesSDK,
+        searchSDK, serpSDK, tomtomSDK } = init
 
 const scraper = new Scraper(openai, s3, pusher, supabase, lambda)
-const sdks = { duckduckGoSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, openCorporatesSDK, searchSDK, serpSDK }
+const sdks = { duckduckGoSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, openCorporatesSDK, searchSDK, serpSDK, tomtomSDK }
 
-// 🔥 NEW: Helper to load existing CSV from S3 and parse leads
+// Helper to load existing CSV from S3 and parse leads
 const loadExistingLeads = async (id: string): Promise<Lead[]> => {
   try {
     const { data } = await supabase.from("scraper").select("downloadable_link").eq("id", id).single()
@@ -380,8 +410,9 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
     let existingLeads: Lead[] = []
     if (retryCount > 0) {
       existingLeads = await loadExistingLeads(id)
-      executionLogs += `🔄 Retry ${retryCount}: Loading ${existingLeads.length} existing leads\n`
-      console.log(`🔄 Retry ${retryCount}: Found ${existingLeads.length} existing leads`)
+      const remaining = limit - existingLeads.length
+      executionLogs += `🔄 Retry ${retryCount}: Found ${existingLeads.length} existing leads (scraping for ${remaining} more)\n`
+      console.log(`🔄 Retry ${retryCount}: Found ${existingLeads.length} existing leads (scraping for ${remaining} more)`)
       currentLeadsCount = existingLeads.length
     }
 
@@ -397,7 +428,7 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
         keyword,
         location,
         limit,
-        existingLeads, // 🔥 Pass existing leads
+        existingLeads,
         (count: number) => { currentLeadsCount = count },
         (logs: string) => { executionLogs = logs },
         sdks,
@@ -420,7 +451,8 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
       // 🔥 FIXED: Retry logic that considers existing leads
       const shouldRetry = foundRatio < 0.8 && retryCount < MAX_RETRIES && limit <= 10000 && newLeadsFound > 0
       if (shouldRetry) {
-        executionLogs += `🔄 Insufficient leads found (${Math.round(foundRatio * 100)}%)\n🔄 Retry ${retryCount + 1}/${MAX_RETRIES} starting...\n`
+        const remaining = limit - leads.length
+        executionLogs += `🔄 Insufficient leads found (${Math.round(foundRatio * 100)}%)\n🔄 Retrying (${retryCount + 1}/${MAX_RETRIES}): ${leads.length} leads found - searching for ${remaining} more\n`
         console.log(`🔄 Insufficient leads, retrying ${retryCount + 1}/${MAX_RETRIES}...`)
         
         // Save current progress before retry
@@ -439,7 +471,7 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
         const tempDownloadUrl = await getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: tempFileName }), { expiresIn: 3600 })
         await scraper.updateDBScraper(id, { downloadable_link: tempDownloadUrl, leads_count: leads.length })
         
-        const retryMessage = `🔄 Retrying (${retryCount + 1}/${MAX_RETRIES}): ${leads.length} leads found, searching for more...\n${executionLogs}`
+        const retryMessage = `🔄 Retrying (${retryCount + 1}/${MAX_RETRIES}): ${leads.length} leads found, searching for ${remaining} more...\n${executionLogs}`
         await scraper.updateDBScraper(id, { message: retryMessage })
         await pusher.trigger(channelId, "scraper:update", { id, message: retryMessage })
         
@@ -517,7 +549,7 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
       } else {
         const statusCode = foundRatio < 0.8 ? 206 : 200
         const responseMessage = foundRatio < 0.8 
-          ? (isUnrealisticRequest ? "⚠️ Location may not have enough businesses of this type" : "⚠️ Not enough leads found after ${MAX_RETRIES} attempts")
+          ? (isUnrealisticRequest ? "⚠️ Location may not have enough businesses of this type" : `⚠️ Not enough leads found after ${MAX_RETRIES} attempts`)
           : "✅ Scraping completed successfully"
 
         await pusher.trigger(channelId, "scraper:completed", {
