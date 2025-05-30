@@ -82,7 +82,7 @@ create table public.scraper (
     ('duckduckgo',      'monthly', 100,   INTERVAL '30 days'),
     ('foursquare',      'fixed',   20000, NULL),               -- credit-based (manual reset)
     ('google',          'monthly', 10000, INTERVAL '30 days'),
-    ('hunter',          'monthly', 500,   INTERVAL '30 days'),
+    ('hunter',          'monthly', 25,   INTERVAL '30 days'),
     ('opencorporates',  'monthly', 200,   INTERVAL '30 days'),
     ('search',          'monthly', 100,   INTERVAL '30 days'),
     ('serp',            'monthly', 100,   INTERVAL '30 days'),
@@ -205,7 +205,7 @@ import { scrapeEmailFromWebsite } from "../utils/scrapeEmailFromWebsite"
 Include clear comments (//1. do sth), use one-line concise code & ternaries, and avoid tiny abbreviations like idx, ctx, or e.
 Make sure phone numbers does not include spaces slashes dashes or any other symbols - it must be numbers only including country code e.g "441642296631"
 
-Existing SDKs: FoursquareSDK,GoogleCustomSearchSDK,MapBoxSDK,NominatimSDK,OpenCorporatesSDK,TomTomSDK
+Existing SDKs: DuckduckGoSDK, FoursquareSDK, GoogleCustomSearchSDK, HunterSDK, OpenCorporatesSDK, searchSDK, SerpSDK, TomTomSDK
 DO NOT USE list:
  1. BingSearchSDK  because "Product to be retired Bing Search and Bing Custom Search APIs will be retired on 11th August 2025"
  2. ClearbitSDK because ❗API keys are available for Clearbit accounts created in 2023 and earlier. If you signed up in 2024,

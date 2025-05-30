@@ -132,15 +132,18 @@ const scrapePlaces = async (
     while (allLeads.length < targetLimit && attempts < maxAttempts) {
       attempts++
       const { available, status, sdkLimits } = await checkSDKAvailability(supabase)
-      logs += `🔍 Attempt ${attempts}: SDK Status: ${status}\n`
-
+    
+      // instead of one‐liner, break into header, status line, and need line
+      logs += `\n🔍 ${attempts} ATTEMPT  ${'-'.repeat(32)}\n`           // e.g. "🔍 3 ATTEMPT --------------------------------"
+      logs += `SDK Status: ${status}\n`                                // next line: "SDK Status: ✅ Available: …"
+      logs += `🎯 Need ${targetLimit - allLeads.length} more leads (${allLeads.length}/${targetLimit})\n`
+    
       const availableSDKs = sdkOrder.filter(sdk => available.includes(sdk))
       if (availableSDKs.length === 0) {
         logs += `❌ No available SDKs for attempt ${attempts}\n`
         logsCallback(logs)
         break
       }
-
       const remaining = targetLimit - allLeads.length
       
       // Smart SDK limit distribution
@@ -313,7 +316,7 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
     executionLogs += `🚀 Lambda execution started\n📋 Payload: ${JSON.stringify(event, null, 2)}\n`
     console.log("=== 🚀 LAMBDA EXECUTION START ===")
 
-    const { keyword, location, channelId, id, limit, parentId, region: jobRegion, retryCount = 0 } = event
+    const { keyword, location, channelId, id, limit, parentId, region: jobRegion, retryCount = 0, isReverse } = event
     const isChildJob = Boolean(parentId && jobRegion)
     const processingType = isChildJob ? 'Child' : 'Parent'
 
@@ -340,7 +343,7 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
       console.log(`📊 Large request detected, splitting into regions...`)
 
       try {
-        const regions = await scraper.generateRegionalChunks(location)
+        const regions = await scraper.generateRegionalChunks(location,isReverse)
         const leadsPerRegion = Math.ceil(limit / 4)
         executionLogs += `📍 Generated regions: ${regions.map(r => `${r.region} (${r.location})`).join(', ')}\n`
         executionLogs += `📊 Leads per region: ${leadsPerRegion}\n`
@@ -368,7 +371,7 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
         const invocationResults = await Promise.allSettled(
           childJobs.map((job) => {
             console.log(`🚀 Triggering child Lambda for region: ${job.region}`, { keyword, location: job.location, limit: leadsPerRegion })
-            return scraper.invokeChildLambda({ keyword, location: job.location, limit: leadsPerRegion, channelId, id: job.id, parentId: id, region: job.region })
+            return scraper.invokeChildLambda({ keyword, location: job.location, limit: leadsPerRegion, channelId, id: job.id, parentId: id, region: job.region, isReverse })
           })
         )
 

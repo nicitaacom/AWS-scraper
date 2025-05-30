@@ -7,6 +7,7 @@ import { scrapeEmailFromWebsite } from "../utils/scrapeEmailFromWebsite"
  * FREE: Unlimited (no official limit)
  * Best for: Basic business info from search
  * Provides: URLs, abstracts, related topics
+ * If error returns string wtih error message
  */
 export class DuckDuckGoSDK {
   private endpoint = "https://api.duckduckgo.com/"

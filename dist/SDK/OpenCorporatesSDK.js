@@ -12,6 +12,7 @@ const scrapeEmailFromWebsite_1 = require("../utils/scrapeEmailFromWebsite"); // 
  * Best for: B2B company data, official business records
  * Provides: Company name, registered address, incorporation date, status
  * Limitations: No phone/email, mainly corporate data
+ * If error returns string wtih error message
  */
 class OpenCorporatesSDK {
     baseUrl = "https://api.opencorporates.com/v0.4";
@@ -29,32 +30,71 @@ class OpenCorporatesSDK {
         this.lastRequestTime = Date.now();
     }
     /**
+     * Validate and normalize search type
+     * @param searchType The search type to validate
+     * @returns A valid search type or null if invalid
+     */
+    validateSearchType(searchType) {
+        const validTypes = ['name', 'jurisdiction', 'industry'];
+        // Direct match
+        if (validTypes.includes(searchType)) {
+            return searchType;
+        }
+        // Normalize common variations
+        const normalized = searchType.toLowerCase().trim();
+        switch (normalized) {
+            case 'company':
+            case 'business':
+            case 'firm':
+            case 'organization':
+            case 'org':
+                return 'name';
+            case 'location':
+            case 'region':
+            case 'country':
+            case 'state':
+                return 'jurisdiction';
+            case 'sector':
+            case 'category':
+            case 'type':
+            case 'business_type':
+                return 'industry';
+            default:
+                return null;
+        }
+    }
+    /**
      * Search for businesses by name, jurisdiction, or industry
      * @param query The search query (name, jurisdiction code, or industry type)
-     * @param searchType The type of search: 'name', 'jurisdiction', or 'industry'
+     * @param searchType The type of search: 'name', 'jurisdiction', 'industry', or variations
      * @param limit The maximum number of results to return
      */
     async searchBusinesses(query, searchType, limit = 30) {
         try {
+            // Validate and normalize search type
+            const validSearchType = this.validateSearchType(searchType);
+            if (!validSearchType) {
+                console.warn(`⚠️ OpenCorporates: Invalid search type '${searchType}'. Defaulting to 'name' search.`);
+                // Default to name search as fallback
+                return this.searchBusinesses(query, 'name', limit);
+            }
             await this.rateLimit();
             let url = `${this.baseUrl}/companies`;
             const params = new URLSearchParams({
                 format: "json",
                 per_page: Math.min(limit, 100).toString()
             });
-            if (searchType === 'name') {
+            if (validSearchType === 'name') {
                 params.append("q", query);
                 url += "/search";
             }
-            else if (searchType === 'jurisdiction') {
+            else if (validSearchType === 'jurisdiction') {
                 params.append("jurisdiction_code", query);
             }
-            else if (searchType === 'industry') {
+            else if (validSearchType === 'industry') {
                 params.append("company_type", query);
             }
-            else {
-                return "Invalid search type. Use 'name', 'jurisdiction', or 'industry'.";
-            }
+            console.log(`🔍 OpenCorporates: Searching ${validSearchType} for "${query}"`);
             const response = await (0, node_fetch_1.default)(`${url}?${params}`);
             const data = await response.json();
             if (!response.ok) {
@@ -64,56 +104,96 @@ class OpenCorporatesSDK {
                 return "No businesses found for the given query.";
             }
             const companies = data.results.companies || [];
+            console.log(`✅ OpenCorporates: Found ${companies.length} companies`);
             const leads = await Promise.all(companies.map(async (company) => {
                 const lead = {
-                    company: company.name || "",
-                    address: company.registered_address_in_full || "",
+                    company: company.company?.name || company.name || "",
+                    address: company.company?.registered_address_in_full || company.registered_address_in_full || "",
                     phone: "",
                     email: "",
                     website: ""
                 };
+                // Enhanced website finding and contact info scraping
                 try {
-                    const website = await this.findWebsite(company.name);
+                    const website = await this.findWebsite(lead.company);
                     if (website) {
                         lead.website = website;
+                        console.log(`🌐 Found website for ${lead.company}: ${website}`);
+                        // Try to scrape phone and email
                         try {
-                            lead.phone = await this.scrapePhoneFromWebsite(website);
+                            const phone = await this.scrapePhoneFromWebsite(website);
+                            if (phone)
+                                lead.phone = phone;
                         }
-                        catch { }
+                        catch (error) {
+                            console.warn(`⚠️ Could not scrape phone from ${website}:`, error);
+                        }
                         try {
-                            lead.email = await (0, scrapeEmailFromWebsite_1.scrapeEmailFromWebsite)(website);
+                            const email = await (0, scrapeEmailFromWebsite_1.scrapeEmailFromWebsite)(website);
+                            if (email)
+                                lead.email = email;
                         }
-                        catch { }
+                        catch (error) {
+                            console.warn(`⚠️ Could not scrape email from ${website}:`, error);
+                        }
                     }
                 }
-                catch { }
+                catch (error) {
+                    console.warn(`⚠️ Could not find website for ${lead.company}:`, error);
+                }
                 return lead;
             }));
-            return leads;
+            return leads.filter(lead => lead.company); // Filter out empty company names
         }
         catch (error) {
-            return `OpenCorporates search failed: ${error instanceof Error ? error.message : String(error)}`;
+            const errorMessage = `OpenCorporates search failed: ${error instanceof Error ? error.message : String(error)}`;
+            console.error(`❌ OpenCorporates error:`, errorMessage);
+            return errorMessage;
         }
+    }
+    /**
+     * Overloaded method to maintain backward compatibility with specific search types
+     */
+    async searchByName(query, limit = 30) {
+        return this.searchBusinesses(query, 'name', limit);
+    }
+    async searchByJurisdiction(query, limit = 30) {
+        return this.searchBusinesses(query, 'jurisdiction', limit);
+    }
+    async searchByIndustry(query, limit = 30) {
+        return this.searchBusinesses(query, 'industry', limit);
     }
     /**
      * Find the website of a company using DuckDuckGo's API
      * @param companyName The name of the company
      */
     async findWebsite(companyName) {
+        if (!companyName)
+            return "";
         try {
             const q = `${companyName} official website`;
             const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`;
-            const res = await (0, node_fetch_1.default)(url);
+            const res = await (0, node_fetch_1.default)(url, {
+                timeout: 10000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            });
             if (!res.ok)
                 return "";
             const data = await res.json();
             const items = [...(data.RelatedTopics || []), ...(data.Results || [])];
             if (items.length > 0 && items[0].FirstURL) {
-                return items[0].FirstURL;
+                const website = items[0].FirstURL;
+                // Basic URL validation
+                if (website.startsWith('http://') || website.startsWith('https://')) {
+                    return website;
+                }
             }
             return "";
         }
-        catch {
+        catch (error) {
+            console.warn(`⚠️ Could not find website for ${companyName}:`, error);
             return "";
         }
     }
@@ -122,16 +202,39 @@ class OpenCorporatesSDK {
      * @param site The website URL to scrape
      */
     async scrapePhoneFromWebsite(site) {
+        if (!site)
+            return "";
         try {
-            const r = await (0, node_fetch_1.default)(site, { timeout: 5000 });
+            const r = await (0, node_fetch_1.default)(site, {
+                timeout: 5000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            });
             if (!r.ok)
                 return "";
             const txt = await r.text();
             const clean = txt.replace(/<[^>]*>/g, " ");
-            const m = clean.match(/\b\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/);
-            return m ? m[0].replace(/[^\d]/g, "") : "";
+            // Enhanced phone number regex patterns
+            const phonePatterns = [
+                /\b\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, // Standard US format
+                /\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/g, // Simple US format
+                /\b\+\d{1,3}\s?\d{1,4}\s?\d{1,4}\s?\d{1,4}\b/g // International format
+            ];
+            for (const pattern of phonePatterns) {
+                const matches = clean.match(pattern);
+                if (matches && matches.length > 0) {
+                    // Return the first valid-looking phone number
+                    const phone = matches[0].replace(/[^\d+]/g, "");
+                    if (phone.length >= 10) {
+                        return phone;
+                    }
+                }
+            }
+            return "";
         }
-        catch {
+        catch (error) {
+            console.warn(`⚠️ Could not scrape phone from ${site}:`, error);
             return "";
         }
     }

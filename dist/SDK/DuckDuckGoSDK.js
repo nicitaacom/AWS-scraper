@@ -11,6 +11,7 @@ const scrapeEmailFromWebsite_1 = require("../utils/scrapeEmailFromWebsite");
  * FREE: Unlimited (no official limit)
  * Best for: Basic business info from search
  * Provides: URLs, abstracts, related topics
+ * If error returns string wtih error message
  */
 class DuckDuckGoSDK {
     endpoint = "https://api.duckduckgo.com/";

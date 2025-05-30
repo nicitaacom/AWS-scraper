@@ -95,7 +95,10 @@ const scrapePlaces = async (keyword, location, targetLimit, existingLeads = [], 
         while (allLeads.length < targetLimit && attempts < maxAttempts) {
             attempts++;
             const { available, status, sdkLimits } = await checkSDKAvailability(supabase);
-            logs += `🔍 Attempt ${attempts}: SDK Status: ${status}\n`;
+            // instead of one‐liner, break into header, status line, and need line
+            logs += `\n🔍 ${attempts} ATTEMPT  ${'-'.repeat(32)}\n`; // e.g. "🔍 3 ATTEMPT --------------------------------"
+            logs += `SDK Status: ${status}\n`; // next line: "SDK Status: ✅ Available: …"
+            logs += `🎯 Need ${targetLimit - allLeads.length} more leads (${allLeads.length}/${targetLimit})\n`;
             const availableSDKs = sdkOrder.filter(sdk => available.includes(sdk));
             if (availableSDKs.length === 0) {
                 logs += `❌ No available SDKs for attempt ${attempts}\n`;
@@ -256,7 +259,7 @@ const handler = async (event) => {
         }
         executionLogs += `🚀 Lambda execution started\n📋 Payload: ${JSON.stringify(event, null, 2)}\n`;
         console.log("=== 🚀 LAMBDA EXECUTION START ===");
-        const { keyword, location, channelId, id, limit, parentId, region: jobRegion, retryCount = 0 } = event;
+        const { keyword, location, channelId, id, limit, parentId, region: jobRegion, retryCount = 0, isReverse } = event;
         const isChildJob = Boolean(parentId && jobRegion);
         const processingType = isChildJob ? 'Child' : 'Parent';
         executionLogs += `🎯 ${processingType} job: "${keyword}" in "${location}" (${limit} leads, retry ${retryCount}/${MAX_RETRIES})\n`;
@@ -278,7 +281,7 @@ const handler = async (event) => {
             executionLogs += `📊 Large request detected (${limit} > ${MAX_LEADS_PER_JOB})\n🔄 Initiating regional split...\n`;
             console.log(`📊 Large request detected, splitting into regions...`);
             try {
-                const regions = await scraper.generateRegionalChunks(location);
+                const regions = await scraper.generateRegionalChunks(location, isReverse);
                 const leadsPerRegion = Math.ceil(limit / 4);
                 executionLogs += `📍 Generated regions: ${regions.map(r => `${r.region} (${r.location})`).join(', ')}\n`;
                 executionLogs += `📊 Leads per region: ${leadsPerRegion}\n`;
@@ -302,7 +305,7 @@ const handler = async (event) => {
                 }
                 const invocationResults = await Promise.allSettled(childJobs.map((job) => {
                     console.log(`🚀 Triggering child Lambda for region: ${job.region}`, { keyword, location: job.location, limit: leadsPerRegion });
-                    return scraper.invokeChildLambda({ keyword, location: job.location, limit: leadsPerRegion, channelId, id: job.id, parentId: id, region: job.region });
+                    return scraper.invokeChildLambda({ keyword, location: job.location, limit: leadsPerRegion, channelId, id: job.id, parentId: id, region: job.region, isReverse });
                 }));
                 const successful = invocationResults.filter((r) => r.status === 'fulfilled' && r.value.success).length;
                 if (successful === 0) {

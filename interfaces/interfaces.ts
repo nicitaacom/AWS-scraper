@@ -24,6 +24,7 @@ export type JobPayload = {
   parentId?: string
   region?: string
   retryCount?: number // to handle cases "roofers" in "Hamburg" "500000" - so it's 1M people in Hamburg and not 500000 roofers
+  isReverse:boolean
 }
 
 export interface Job {

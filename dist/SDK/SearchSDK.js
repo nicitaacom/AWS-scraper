@@ -12,6 +12,7 @@ const scrapeEmailFromWebsite_1 = require("../utils/scrapeEmailFromWebsite");
  * PAID: Starting at $20/month for 2,500 searches
  * Best for: Google Search results, Google Maps, Google Shopping
  * Provides: Rich search results with business info
+ * If error returns string wtih error message
  *
  * Public methods: searchBusinesses, getUsage
  * All other methods are private utilities

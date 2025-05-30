@@ -8,6 +8,7 @@ import { scrapeEmailFromWebsite } from "../utils/scrapeEmailFromWebsite"
  * Best for: Finding business websites and contact info
  * Provides: Website URLs, snippets, titles
  * Enhanced: MUST return email AND phone for each lead
+ * If error returns string wtih error message
  * 
  * CRITICAL REQUIREMENT: Every lead MUST have at least email OR phone
  * If API doesn't provide contact info, automatically scrapes from:
@@ -15,6 +16,8 @@ import { scrapeEmailFromWebsite } from "../utils/scrapeEmailFromWebsite"
  * - Google search using business name + location
  * - Business directory lookups
  * 
+ * @param query - Business type (e.g. "nail salon")
+ * @param location - City or region (e.g. "Miami")
  * @returns Promise<Lead[]> - All leads guaranteed to have email OR phone
  */
 export class GoogleCustomSearchSDK {
@@ -78,8 +81,8 @@ export class GoogleCustomSearchSDK {
                 this.scrapePhoneFromWebsite(website)
               ])
               
-              email = emailResult.status === 'fulfilled' ? emailResult.value || "" : ""
-              phone = phoneResult.status === 'fulfilled' ? phoneResult.value || "" : ""
+              email = emailResult.status === 'fulfilled' ? emailResult.value || this.extractEmail(item.snippet) : this.extractEmail(item.snippet)
+              phone = phoneResult.status === 'fulfilled' ? phoneResult.value || this.extractPhone(item.snippet) : this.extractPhone(item.snippet)
             }
             
             // If we still don't have email OR phone, scrape from internet
@@ -154,6 +157,24 @@ export class GoogleCustomSearchSDK {
       console.error('Google Custom Search error:', error)
       throw new Error(`Google Custom Search failed: ${error instanceof Error ? error.message : String(error)}`)
     }
+  }
+
+  private extractEmail(text: string): string {
+    const emailMatch = text.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/)
+    return emailMatch ? emailMatch[0] : ""
+  }
+  
+  private extractPhone(text: string): string {
+    const patterns = [
+      /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/,
+      /\b\(\d{3}\)\s?\d{3}[-.]?\d{4}\b/,
+      /\b\+\d{1,3}[-.\s]?\d{3,4}[-.\s]?\d{3,4}[-.\s]?\d{3,4}\b/
+    ]
+    for (const pattern of patterns) {
+      const match = text.match(pattern)
+      if (match && match[0]) return match[0].trim()
+    }
+    return ""
   }
   
   private async scrapeContactFromInternet(businessName: string, address: string): Promise<{email: string, phone: string}> {

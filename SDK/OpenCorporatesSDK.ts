@@ -8,6 +8,7 @@ import { scrapeEmailFromWebsite } from "../utils/scrapeEmailFromWebsite" // Assu
  * Best for: B2B company data, official business records
  * Provides: Company name, registered address, incorporation date, status
  * Limitations: No phone/email, mainly corporate data
+ * If error returns string wtih error message
  */
 export class OpenCorporatesSDK {
   private baseUrl = "https://api.opencorporates.com/v0.4"
@@ -27,13 +28,59 @@ export class OpenCorporatesSDK {
   }
 
   /**
+   * Validate and normalize search type
+   * @param searchType The search type to validate
+   * @returns A valid search type or null if invalid
+   */
+  private validateSearchType(searchType: string): 'name' | 'jurisdiction' | 'industry' | null {
+    const validTypes = ['name', 'jurisdiction', 'industry'] as const
+    
+    // Direct match
+    if (validTypes.includes(searchType as any)) {
+      return searchType as 'name' | 'jurisdiction' | 'industry'
+    }
+    
+    // Normalize common variations
+    const normalized = searchType.toLowerCase().trim()
+    switch (normalized) {
+      case 'company':
+      case 'business':
+      case 'firm':
+      case 'organization':
+      case 'org':
+        return 'name'
+      case 'location':
+      case 'region':
+      case 'country':
+      case 'state':
+        return 'jurisdiction'
+      case 'sector':
+      case 'category':
+      case 'type':
+      case 'business_type':
+        return 'industry'
+      default:
+        return null
+    }
+  }
+
+  /**
    * Search for businesses by name, jurisdiction, or industry
    * @param query The search query (name, jurisdiction code, or industry type)
-   * @param searchType The type of search: 'name', 'jurisdiction', or 'industry'
+   * @param searchType The type of search: 'name', 'jurisdiction', 'industry', or variations
    * @param limit The maximum number of results to return
    */
-  public async searchBusinesses(query: string, searchType: 'name' | 'jurisdiction' | 'industry', limit: number = 30): Promise<Lead[] | string> {
+  public async searchBusinesses(query: string, searchType: string, limit: number = 30): Promise<Lead[] | string> {
     try {
+      // Validate and normalize search type
+      const validSearchType = this.validateSearchType(searchType)
+      
+      if (!validSearchType) {
+        console.warn(`⚠️ OpenCorporates: Invalid search type '${searchType}'. Defaulting to 'name' search.`)
+        // Default to name search as fallback
+        return this.searchBusinesses(query, 'name', limit)
+      }
+
       await this.rateLimit()
 
       let url = `${this.baseUrl}/companies`
@@ -42,16 +89,16 @@ export class OpenCorporatesSDK {
         per_page: Math.min(limit, 100).toString()
       })
 
-      if (searchType === 'name') {
+      if (validSearchType === 'name') {
         params.append("q", query)
         url += "/search"
-      } else if (searchType === 'jurisdiction') {
+      } else if (validSearchType === 'jurisdiction') {
         params.append("jurisdiction_code", query)
-      } else if (searchType === 'industry') {
+      } else if (validSearchType === 'industry') {
         params.append("company_type", query)
-      } else {
-        return "Invalid search type. Use 'name', 'jurisdiction', or 'industry'."
       }
+
+      console.log(`🔍 OpenCorporates: Searching ${validSearchType} for "${query}"`)
 
       const response = await fetch(`${url}?${params}`)
       const data = await response.json()
@@ -65,35 +112,67 @@ export class OpenCorporatesSDK {
       }
 
       const companies = data.results.companies || []
+      console.log(`✅ OpenCorporates: Found ${companies.length} companies`)
+
       const leads = await Promise.all(companies.map(async (company: any) => {
         const lead: Lead = {
-          company: company.name || "",
-          address: company.registered_address_in_full || "",
+          company: company.company?.name || company.name || "",
+          address: company.company?.registered_address_in_full || company.registered_address_in_full || "",
           phone: "",
           email: "",
           website: ""
         }
 
+        // Enhanced website finding and contact info scraping
         try {
-          const website = await this.findWebsite(company.name)
+          const website = await this.findWebsite(lead.company)
           if (website) {
             lead.website = website
+            console.log(`🌐 Found website for ${lead.company}: ${website}`)
+            
+            // Try to scrape phone and email
             try {
-              lead.phone = await this.scrapePhoneFromWebsite(website)
-            } catch {}
+              const phone = await this.scrapePhoneFromWebsite(website)
+              if (phone) lead.phone = phone
+            } catch (error) {
+              console.warn(`⚠️ Could not scrape phone from ${website}:`, error)
+            }
+            
             try {
-              lead.email = await scrapeEmailFromWebsite(website)
-            } catch {}
+              const email = await scrapeEmailFromWebsite(website)
+              if (email) lead.email = email
+            } catch (error) {
+              console.warn(`⚠️ Could not scrape email from ${website}:`, error)
+            }
           }
-        } catch {}
+        } catch (error) {
+          console.warn(`⚠️ Could not find website for ${lead.company}:`, error)
+        }
 
         return lead
       }))
 
-      return leads
+      return leads.filter(lead => lead.company) // Filter out empty company names
     } catch (error) {
-      return `OpenCorporates search failed: ${error instanceof Error ? error.message : String(error)}`
+      const errorMessage = `OpenCorporates search failed: ${error instanceof Error ? error.message : String(error)}`
+      console.error(`❌ OpenCorporates error:`, errorMessage)
+      return errorMessage
     }
+  }
+
+  /**
+   * Overloaded method to maintain backward compatibility with specific search types
+   */
+  public async searchByName(query: string, limit: number = 30): Promise<Lead[] | string> {
+    return this.searchBusinesses(query, 'name', limit)
+  }
+
+  public async searchByJurisdiction(query: string, limit: number = 30): Promise<Lead[] | string> {
+    return this.searchBusinesses(query, 'jurisdiction', limit)
+  }
+
+  public async searchByIndustry(query: string, limit: number = 30): Promise<Lead[] | string> {
+    return this.searchBusinesses(query, 'industry', limit)
   }
 
   /**
@@ -101,18 +180,35 @@ export class OpenCorporatesSDK {
    * @param companyName The name of the company
    */
   private async findWebsite(companyName: string): Promise<string> {
+    if (!companyName) return ""
+    
     try {
       const q = `${companyName} official website`
       const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`
-      const res = await fetch(url)
+      
+      const res = await fetch(url, { 
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      })
+      
       if (!res.ok) return ""
+      
       const data = await res.json()
       const items = [...(data.RelatedTopics || []), ...(data.Results || [])]
+      
       if (items.length > 0 && items[0].FirstURL) {
-        return items[0].FirstURL
+        const website = items[0].FirstURL
+        // Basic URL validation
+        if (website.startsWith('http://') || website.startsWith('https://')) {
+          return website
+        }
       }
+      
       return ""
-    } catch {
+    } catch (error) {
+      console.warn(`⚠️ Could not find website for ${companyName}:`, error)
       return ""
     }
   }
@@ -122,14 +218,42 @@ export class OpenCorporatesSDK {
    * @param site The website URL to scrape
    */
   private async scrapePhoneFromWebsite(site: string): Promise<string> {
+    if (!site) return ""
+    
     try {
-      const r = await fetch(site, { timeout: 5000 })
+      const r = await fetch(site, { 
+        timeout: 5000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      })
+      
       if (!r.ok) return ""
+      
       const txt = await r.text()
       const clean = txt.replace(/<[^>]*>/g, " ")
-      const m = clean.match(/\b\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/)
-      return m ? m[0].replace(/[^\d]/g, "") : ""
-    } catch {
+      
+      // Enhanced phone number regex patterns
+      const phonePatterns = [
+        /\b\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, // Standard US format
+        /\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/g, // Simple US format
+        /\b\+\d{1,3}\s?\d{1,4}\s?\d{1,4}\s?\d{1,4}\b/g // International format
+      ]
+      
+      for (const pattern of phonePatterns) {
+        const matches = clean.match(pattern)
+        if (matches && matches.length > 0) {
+          // Return the first valid-looking phone number
+          const phone = matches[0].replace(/[^\d+]/g, "")
+          if (phone.length >= 10) {
+            return phone
+          }
+        }
+      }
+      
+      return ""
+    } catch (error) {
+      console.warn(`⚠️ Could not scrape phone from ${site}:`, error)
       return ""
     }
   }
