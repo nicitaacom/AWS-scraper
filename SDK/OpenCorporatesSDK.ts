@@ -1,6 +1,6 @@
 import fetch from "node-fetch"
 import { Lead } from "../interfaces/interfaces"
-import { scrapeEmailFromWebsite } from "../utils/scrapeEmailFromWebsite" // Assuming this utility is available
+import { scrapeContactsFromWebsite } from "../utils/scrapeContactsFromWebsite"
 
 /**
  * OpenCorporates API SDK
@@ -139,7 +139,7 @@ export class OpenCorporatesSDK {
             }
             
             try {
-              const email = await scrapeEmailFromWebsite(website)
+              const email = (await scrapeContactsFromWebsite(website)).email
               if (email) lead.email = email
             } catch (error) {
               console.warn(`⚠️ Could not scrape email from ${website}:`, error)

@@ -1,6 +1,6 @@
 import fetch from "node-fetch"
 import { Lead } from "../interfaces/interfaces"
-import { scrapeEmailFromWebsite } from "../utils/scrapeEmailFromWebsite"
+import { scrapeContactsFromWebsite } from "../utils/scrapeContactsFromWebsite"
 
 /**
  * Foursquare Places API SDK
@@ -89,7 +89,8 @@ export class FoursquareSDK {
             let email = ""
 
             // 🕸️ Scrape website for email
-            email = website ? await scrapeEmailFromWebsite(website).catch(() => "") : ""
+            email = website ? (await scrapeContactsFromWebsite(website)).email : ""
+            phone = website ? (await scrapeContactsFromWebsite(website)).phone : ""
             // 🌍 Scrape internet if no contact
             if (!email && !phone) {
               const e = await this.scrapeContactFromInternet(company, address)

@@ -5,7 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TomTomSDK = void 0;
 const node_fetch_1 = __importDefault(require("node-fetch"));
-const scrapeEmailFromWebsite_1 = require("../utils/scrapeEmailFromWebsite");
+const scrapeContactsFromWebsite_1 = require("../utils/scrapeContactsFromWebsite");
 /**
  * TomTom Places API SDK
  * FREE: 2,500 requests/day
@@ -60,7 +60,7 @@ class TomTomSDK {
                 company: poi.poi?.name || "",
                 address: this.formatAddress(poi.address),
                 phone: this.cleanPhone(poi.poi?.phone || ""),
-                email: poi.poi?.url ? await (0, scrapeEmailFromWebsite_1.scrapeEmailFromWebsite)(poi.poi.url) : "",
+                email: poi.poi?.url ? (await (0, scrapeContactsFromWebsite_1.scrapeContactsFromWebsite)(poi.poi.url)).email : "",
                 website: poi.poi?.url || "",
             })));
             return leads.filter((lead) => lead.company);

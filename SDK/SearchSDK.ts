@@ -1,6 +1,6 @@
 import fetch from "node-fetch"
 import { Lead } from "../interfaces/interfaces"
-import { scrapeEmailFromWebsite } from "../utils/scrapeEmailFromWebsite"
+import { scrapeContactsFromWebsite } from "../utils/scrapeContactsFromWebsite"
 
 /**
  * SearchAPI.io SDK
@@ -203,8 +203,8 @@ export class SearchSDK {
       const lead: Lead = {
         company,
         address: this.extractAddress(result.snippet || ""),
-        phone: await this.scrapePhoneFromWebsite(website),
-        email: await scrapeEmailFromWebsite(website).catch(() => ""),
+        phone: (await scrapeContactsFromWebsite(website)).phone,
+        email: (await scrapeContactsFromWebsite(website)).email,
         website,
       }
 
@@ -222,7 +222,7 @@ export class SearchSDK {
       
       // 2. Try to scrape from website
       if (result.website) {
-        return await scrapeEmailFromWebsite(result.website).catch(() => "")
+        return (await scrapeContactsFromWebsite(result.website)).email
       }
       
       return ""

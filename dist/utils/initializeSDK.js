@@ -17,6 +17,8 @@ const OpenCorporatesSDK_1 = require("../SDK/OpenCorporatesSDK");
 const SearchSDK_1 = require("../SDK/SearchSDK");
 const SerpSDK_1 = require("../SDK/SerpSDK");
 const TomTomSDK_1 = require("../SDK/TomTomSDK");
+const ApifyContactInfoSDK_1 = require("../SDK/ApifyContactInfoSDK");
+const ScrapingBeeSDK_1 = require("../SDK/ScrapingBeeSDK");
 function initializeClients() {
     // 1. Define mutable array
     const requiredEnvs = [
@@ -49,6 +51,8 @@ function initializeClients() {
             searchSDK: new SearchSDK_1.SearchSDK(process.env.SEARCH_API_KEY),
             serpSDK: new SerpSDK_1.SerpSDK(process.env.SERP_API_KEY),
             tomtomSDK: new TomTomSDK_1.TomTomSDK(process.env.TOM_TOM_API_KEY),
+            apifyContactInfoSDK: new ApifyContactInfoSDK_1.ApifyContactInfoSDK(process.env.APIFY_API_KEY),
+            scrapingBeeSDK: new ScrapingBeeSDK_1.ScrapingBeeSDK(process.env.SCRAPING_BEE_API_KEY),
         };
     }
     catch (error) {

@@ -5,7 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OpenCorporatesSDK = void 0;
 const node_fetch_1 = __importDefault(require("node-fetch"));
-const scrapeEmailFromWebsite_1 = require("../utils/scrapeEmailFromWebsite"); // Assuming this utility is available
+const scrapeContactsFromWebsite_1 = require("../utils/scrapeContactsFromWebsite");
 /**
  * OpenCorporates API SDK
  * FREE: 60 requests/minute (86,400/day potential)
@@ -129,7 +129,7 @@ class OpenCorporatesSDK {
                             console.warn(`⚠️ Could not scrape phone from ${website}:`, error);
                         }
                         try {
-                            const email = await (0, scrapeEmailFromWebsite_1.scrapeEmailFromWebsite)(website);
+                            const email = (await (0, scrapeContactsFromWebsite_1.scrapeContactsFromWebsite)(website)).email;
                             if (email)
                                 lead.email = email;
                         }

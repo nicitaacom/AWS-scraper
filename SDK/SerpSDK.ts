@@ -1,6 +1,6 @@
 import fetch from "node-fetch"
 import { Lead } from "../interfaces/interfaces"
-import { scrapeEmailFromWebsite } from "../utils/scrapeEmailFromWebsite"
+import { scrapeContactsFromWebsite } from "../utils/scrapeContactsFromWebsite"
 
 /**
  * SerpAPI SDK
@@ -83,12 +83,12 @@ export class SerpSDK {
             // parallel scrape email & phone
             const [email, phone] = await Promise.all([
               website
-                ? scrapeEmailFromWebsite(website).catch(() => "")
+                ? (await scrapeContactsFromWebsite(website)).email
                 : Promise.resolve(""),
               item.phone
                 ? Promise.resolve(this.cleanPhone(item.phone))
                 : website
-                ? this.scrapePhoneFromWebsite(website).catch(() => "")
+                ? (await scrapeContactsFromWebsite(website)).phone
                 : Promise.resolve("")
             ])
 

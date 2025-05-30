@@ -5,7 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SerpSDK = void 0;
 const node_fetch_1 = __importDefault(require("node-fetch"));
-const scrapeEmailFromWebsite_1 = require("../utils/scrapeEmailFromWebsite");
+const scrapeContactsFromWebsite_1 = require("../utils/scrapeContactsFromWebsite");
 /**
  * SerpAPI SDK
  * FREE: 100 searches/month
@@ -77,12 +77,12 @@ class SerpSDK {
                     // parallel scrape email & phone
                     const [email, phone] = await Promise.all([
                         website
-                            ? (0, scrapeEmailFromWebsite_1.scrapeEmailFromWebsite)(website).catch(() => "")
+                            ? (await (0, scrapeContactsFromWebsite_1.scrapeContactsFromWebsite)(website)).email
                             : Promise.resolve(""),
                         item.phone
                             ? Promise.resolve(this.cleanPhone(item.phone))
                             : website
-                                ? this.scrapePhoneFromWebsite(website).catch(() => "")
+                                ? (await (0, scrapeContactsFromWebsite_1.scrapeContactsFromWebsite)(website)).phone
                                 : Promise.resolve("")
                     ]);
                     if (!company.trim() || (!email && !phone))

@@ -5,7 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SearchSDK = void 0;
 const node_fetch_1 = __importDefault(require("node-fetch"));
-const scrapeEmailFromWebsite_1 = require("../utils/scrapeEmailFromWebsite");
+const scrapeContactsFromWebsite_1 = require("../utils/scrapeContactsFromWebsite");
 /**
  * SearchAPI.io SDK
  * FREE: 100 requests/month
@@ -194,8 +194,8 @@ class SearchSDK {
             const lead = {
                 company,
                 address: this.extractAddress(result.snippet || ""),
-                phone: await this.scrapePhoneFromWebsite(website),
-                email: await (0, scrapeEmailFromWebsite_1.scrapeEmailFromWebsite)(website).catch(() => ""),
+                phone: (await (0, scrapeContactsFromWebsite_1.scrapeContactsFromWebsite)(website)).phone,
+                email: (await (0, scrapeContactsFromWebsite_1.scrapeContactsFromWebsite)(website)).email,
                 website,
             };
             return lead;
@@ -212,7 +212,7 @@ class SearchSDK {
                 return result.contact.email;
             // 2. Try to scrape from website
             if (result.website) {
-                return await (0, scrapeEmailFromWebsite_1.scrapeEmailFromWebsite)(result.website).catch(() => "");
+                return (await (0, scrapeContactsFromWebsite_1.scrapeContactsFromWebsite)(result.website)).email;
             }
             return "";
         }

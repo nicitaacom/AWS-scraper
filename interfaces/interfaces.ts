@@ -7,12 +7,6 @@ export type Lead = {
   website: string
 }
 
-/** Regional chunk for parallel processing */
-export type RegionChunk = {
-  region: string
-  location: string
-  description: string
-}
 
 /** Job input payload */
 export type JobPayload = {
@@ -22,23 +16,9 @@ export type JobPayload = {
   channelId: string // for pusher channelId
   id: string
   parentId?: string
-  region?: string
+  cities:string[]  
   retryCount?: number // to handle cases "roofers" in "Hamburg" "500000" - so it's 1M people in Hamburg and not 500000 roofers
   isReverse:boolean
-}
-
-export interface Job {
-  id: string;
-  keyword: string;
-  location: string;
-  limit: number;
-  channel_id: string;
-  parent_id: string;
-  region: string;
-  status: string; // should be only "completed" | "pending" | "error"
-  created_at: string;
-  leads_count: number;
-  message: string;
 }
 
 

@@ -1,10 +1,27 @@
 import OpenAI from "openai"
 import Pusher from "pusher";
 import { SupabaseClient } from "@supabase/supabase-js"
-import { JobPayload, Lead, RegionChunk } from "../interfaces/interfaces";
+import { JobPayload, Lead } from "../interfaces/interfaces";
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
+import { checkSDKAvailability } from "../utils/checkSDKAvailability";
+import { extractEmailSafely } from "../utils/extractEmailSafely";
+
+interface SDKs {
+  duckduckGoSDK: string
+  foursquareSDK: string
+  googleCustomSearchSDK: string
+  hunterSDK: string
+  openCorporatesSDK: string
+  puppeteerGoogleMapsSDK: string
+  searchSDK: string
+  serpSDK: string
+  tomtomSDK: string
+  apifyContactInfoSDK: string
+  scrapingBeeSDK: string
+  [index: string]: string
+}
 
 export class Scraper {
 
@@ -14,7 +31,20 @@ export class Scraper {
     private pusher:Pusher,
     protected supabaseAdmin:SupabaseClient<any, "public", any>,
     protected lambda:LambdaClient,
-    protected AWS_LAMBDA_FUNCTION_NAME = process.env.AWS_LAMBDA_FUNCTION_NAME || "lead-scraper"
+    protected AWS_LAMBDA_FUNCTION_NAME = process.env.AWS_LAMBDA_FUNCTION_NAME || "lead-scraper",
+    protected SDK_EMOJIS: SDKs = {
+      duckduckGoSDK: '🦆',
+      foursquareSDK: '📍',
+      googleCustomSearchSDK: '🌐',
+      hunterSDK: '🕵️',
+      openCorporatesSDK: '🏢',
+      puppeteerGoogleMapsSDK: '🧠',
+      searchSDK: '🔎',
+      serpSDK: '📊',
+      tomtomSDK: '🗺️',
+      apifyContactInfoSDK: '🧪',
+      scrapingBeeSDK: '🐝'
+    }
   ) {}
 
   /**
@@ -38,7 +68,7 @@ export class Scraper {
   return { valid: true }
 }
 
-  public async generateRegionalChunks(location: string,isReverse:boolean): Promise<RegionChunk[]> {
+  public async generateRegionalChunks(location: string,isReverse:boolean): Promise<string[] | string> {
     /**
      * Generates regional chunks using AI with robust error handling
      * @returns type RegionChunk = {
@@ -115,23 +145,13 @@ export class Scraper {
         const content = response.choices[0]?.message?.content
         if (!content) {
           console.warn("No content in OpenAI response")
-          return this.getFallbackChunks(location)
+          return "No content in OpenAI response"
         }
     
-        const chunks = this.extractJsonFromResponse(content) as RegionChunk[]
+        const responseJSON = this.extractJsonFromResponse(content) as string[]
         
-        const isValidChunk = (chunk: any): chunk is RegionChunk => 
-          chunk && typeof chunk.region === 'string' && typeof chunk.location === 'string'
-        
-        const validChunks = chunks.filter(isValidChunk)
-        
-        if (validChunks.length === 4) {
-          console.log(`Successfully generated ${validChunks.length} regional chunks:`, validChunks.map(c => c.region).join(', '))
-          return validChunks
-        }
-        
-        console.warn(`Invalid chunks received (${validChunks.length}/4), using fallback`)
-        return this.getFallbackChunks(location)
+        return responseJSON        
+     
         
       } catch (error) {
         console.error("AI chunking failed:", error)
@@ -140,7 +160,7 @@ export class Scraper {
           message: (error as Error).message,
           stack: (error as Error).stack?.slice(0, 500)
         })
-        return this.getFallbackChunks(location)
+        return (error as Error).message
       }
     
   }
@@ -333,6 +353,148 @@ public updateDBScraper = async (
     throw error;
   }
 };
+public scrapeLeads = async (
+  keyword: string,
+  cities: string[],
+  targetLimit: number,
+  existingLeads: Lead[] = [],
+  progressCallback: (count: number) => void,
+  logsCallback: (logs: string) => void,
+  sdks: Record<string, any>,
+): Promise<Lead[]> => {
+  let logs = ""
+  let allLeads: Lead[] = [...existingLeads]
+  const seenCompanies = new Set<string>()
+  const leadsPerCity = Math.ceil(targetLimit / cities.length)
+
+  existingLeads.forEach(lead => seenCompanies.add(`${lead.company}-${lead.address}`.toLowerCase().trim()))
+
+  logs += `🏙️ Processing ${cities.length} cities: ${cities.join(', ')}\n`
+  logs += `🎯 Target: ${leadsPerCity} leads per city (${targetLimit} total)\n`
+  logsCallback(logs)
+
+  let cityIndex = 0
+  let attempts = 0
+  const maxAttempts = 8
+
+  try {
+    while (allLeads.length < targetLimit && attempts < maxAttempts && cityIndex < cities.length) {
+      attempts++
+      const currentCity = cities[cityIndex % cities.length]
+
+      const { available, status, sdkLimits } = await checkSDKAvailability(this.supabaseAdmin)
+
+      logs += `\n🔍 ATTEMPT ${attempts} - City: ${currentCity} ${'-'.repeat(20)}\n`
+      logs += `SDK Status: ${status}\n`
+      logs += `🎯 Need ${targetLimit - allLeads.length} more leads (${allLeads.length}/${targetLimit})\n`
+
+      const availableSDKs = Object.keys(sdks).filter(sdk => available.includes(sdk))
+      if (!availableSDKs.length) {
+        logs += `❌ No available SDKs\n`
+        logsCallback(logs)
+        break
+      }
+
+      const remaining = Math.min(targetLimit - allLeads.length, leadsPerCity)
+      const sdkDistribution: Record<string, number> = {}
+      const basePerSDK = Math.floor(remaining / availableSDKs.length)
+
+      let totalAllocated = 0
+      availableSDKs.forEach(sdk => {
+        const maxAvailable = sdkLimits[sdk]?.available || 0
+        const alloc = Math.min(basePerSDK, maxAvailable)
+        sdkDistribution[sdk] = alloc
+        totalAllocated += alloc
+      })
+
+      let remainingToDistribute = remaining - totalAllocated
+      while (remainingToDistribute > 0) {
+        for (const sdk of availableSDKs) {
+          const maxAvailable = sdkLimits[sdk]?.available || 0
+          const currAlloc = sdkDistribution[sdk] || 0
+          const add = Math.min(remainingToDistribute, maxAvailable - currAlloc)
+          if (add > 0) {
+            sdkDistribution[sdk] += add
+            remainingToDistribute -= add
+            totalAllocated += add
+          }
+        }
+        if (remainingToDistribute <= 0) break
+      }
+
+      const actualTotal = Object.values(sdkDistribution).reduce((a, b) => a + b, 0)
+      const distString = availableSDKs.map(sdk => {
+        const allocated = sdkDistribution[sdk]
+        const max = sdkLimits[sdk]?.available || 0
+        return `${allocated}${allocated !== max && max < 50 ? `(${max} max)` : ''}`
+      }).join('+')
+
+      logs += `🏙️ Scraping "${keyword}" in ${currentCity}\n`
+      logs += `🚀 Using ${availableSDKs.length} SDKs (${distString}=${actualTotal}): ${availableSDKs.join(', ')}\n`
+      logsCallback(logs)
+
+      let newLeadsThisAttempt = 0
+      for (const sdkName of availableSDKs) {
+        if (allLeads.length >= targetLimit) break
+        const sdkLimit = sdkDistribution[sdkName] || 0
+        if (sdkLimit <= 0) continue
+
+        try {
+          const sdk = sdks[sdkName]
+          if (!sdk || typeof sdk.searchBusinesses !== "function") {
+            logs += `❌ ${sdkName} missing or invalid\n`
+            continue
+          }
+
+          logs += `🔍 ${sdkName}: fetching ${sdkLimit} leads in ${currentCity}...\n`
+          logsCallback(logs)
+
+          const leads = await sdk.searchBusinesses(keyword, currentCity, sdkLimit)
+          if (typeof leads === "string") {
+            logs += `❌ ${sdkName} error: ${leads}\n`
+            continue
+          }
+
+          const newLeads = leads.filter((lead: Lead) => {
+            const key = `${lead.company}-${lead.address}`.toLowerCase().trim()
+            return seenCompanies.has(key) ? false : seenCompanies.add(key)
+          })
+
+          for (const lead of newLeads)
+            if (!lead.email && lead.website)
+              lead.email = await extractEmailSafely(lead.website)
+
+          allLeads.push(...newLeads)
+          newLeadsThisAttempt += newLeads.length
+          progressCallback(allLeads.length)
+
+          logs += `✅ ${sdkName}: got ${newLeads.length} leads\n`
+          await this.updateDBSDKFreeTier({ sdkName, usedCount: leads.length, increment: true })
+        } catch (error) {
+          logs += `❌ ${sdkName} failed: ${(error as Error).message}\n`
+        }
+        logsCallback(logs)
+      }
+
+      if (newLeadsThisAttempt === 0 || allLeads.length >= targetLimit) {
+        cityIndex++
+        if (newLeadsThisAttempt === 0)
+          logs += `⚠️ No new leads in ${currentCity}, moving on...\n`
+      }
+
+      if (allLeads.length < targetLimit && cityIndex < cities.length && attempts < maxAttempts)
+        await new Promise(res => setTimeout(res, 2000))
+    }
+
+    logs += `🎯 Final: ${allLeads.length}/${targetLimit} leads in ${attempts} attempts\n`
+    logsCallback(logs)
+    return allLeads
+  } catch (error) {
+    logs += `❌ Critical error: ${(error as Error).message}\n`
+    logsCallback(logs)
+    throw error
+  }
+}
 
 /**
  * Updates SDK free tier usage with comprehensive error handling
@@ -380,7 +542,7 @@ public updateDBSDKFreeTier = async ({
   }
 }
 
-public invokeChildLambda = async (payload: JobPayload): Promise<{ success: boolean; region: string; error?: string }> => {
+public invokeChildLambda = async (payload: JobPayload): Promise<{ success: boolean; cities: string[]; error?: string }> => {
   try {
     const command = new InvokeCommand({
       FunctionName: this.AWS_LAMBDA_FUNCTION_NAME,
@@ -391,33 +553,21 @@ public invokeChildLambda = async (payload: JobPayload): Promise<{ success: boole
     const result = await this.lambda.send(command)
     
     if (result.StatusCode !== 202) {
-      console.error(`Child Lambda invocation failed for REGION ${payload.region}: StatusCode ${result.StatusCode}`)
-      return { success: false, region: payload.region || 'unknown', error: `Lambda invocation failed with status ${result.StatusCode}` }
+      console.error(`🚀 Child Lambda invocation failed for cities ${payload.cities?.join(', ')}: StatusCode ${result.StatusCode}`)
+      return { success: false, cities: payload.cities || [], error: `Lambda invocation failed with status ${result.StatusCode}` }
     }
     
-    console.log(`✓ Triggered child Lambda for REGION: ${payload.region}`)
-    return { success: true, region: payload.region || 'unknown' }
+    console.log(`✅ Triggered child Lambda for cities: ${payload.cities?.join(', ')}`)
+    return { success: true, cities: payload.cities || [] }
     
   } catch (error) {
-    console.error(`Failed to invoke child Lambda for REGION ${payload.region}:`, error)
-    return { success: false, region: payload.region || 'unknown', error: (error as Error).message }
+    console.error(`❌ Failed to invoke child Lambda for cities ${payload.cities?.join(', ')}:`, error)
+    return { success: false, cities: payload.cities || [], error: (error as Error).message }
   }
 }
 
 
 
-  /**
- * Fallback regional chunks when AI fails
- */
-  private getFallbackChunks = (location: string): RegionChunk[] => {
-  console.log(`Using fallback chunks for: ${location}`)
-  return [
-    { region: "North", location: `${location} North`, description: "Northern area coverage" },
-    { region: "South", location: `${location} South`, description: "Southern area coverage" },
-    { region: "East", location: `${location} East`, description: "Eastern area coverage" },
-    { region: "West", location: `${location} West`, description: "Western area coverage" }
-  ]
-}
 
 /**
  * Safely extracts JSON from OpenAI response, handling markdown code blocks

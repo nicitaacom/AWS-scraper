@@ -1,6 +1,6 @@
 import fetch from "node-fetch";
 import { Lead } from "../interfaces/interfaces";
-import { scrapeEmailFromWebsite } from "../utils/scrapeEmailFromWebsite";
+import { scrapeContactsFromWebsite } from "../utils/scrapeContactsFromWebsite";
 
 // Interface for geocoding result data
 interface LocationData {
@@ -66,7 +66,7 @@ export class TomTomSDK {
           company: poi.poi?.name || "",
           address: this.formatAddress(poi.address),
           phone: this.cleanPhone(poi.poi?.phone || ""),
-          email: poi.poi?.url ? await scrapeEmailFromWebsite(poi.poi.url) : "",
+          email: poi.poi?.url ? (await scrapeContactsFromWebsite(poi.poi.url)).email : "",
           website: poi.poi?.url || "",
         }))
       );

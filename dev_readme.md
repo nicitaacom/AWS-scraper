@@ -2,8 +2,8 @@ You're building a lead scraper Lambda function.
 
 **What it does**:
 - Scrapes business leads using free SDKs (if SDK provide no emails - use scrapeEmailFromWebsite in SDK)
-- Uses AI or internal logic to split a single large request into 4 regional chunks: North, South, West, East
-- If leads limit is too large for Lambda's 15min timeout, split into multiple child jobs (parallel Lambdas) (current speed 1 lead per 2 seconds)
+- Uses AI or internal logic to split a single large request into 4 chunks it split string[] with cities into 4 smaller chunks
+- Anyway split split into multiple child jobs using `scraper.generateRegionalChunks` 4 (parallel Lambdas) (current speed 1 lead per 2 seconds)
 - If leads limit is too large and outside of free plans of all SDKs then updateDB message column and trigger pusher event "scraper:error"
   with human readable formatted text that explains status on each free SDK (free tier limit)
 - Merge results of child jobs into parent
@@ -79,14 +79,16 @@ create table public.scraper (
   -- 🚀 Seed default SDK limits
   INSERT INTO public.sdk_freetier (sdk_name, limit_type, limit_value, period_duration)
   VALUES 
-    ('duckduckgo',      'monthly', 100,   INTERVAL '30 days'),
-    ('foursquare',      'fixed',   20000, NULL),               -- credit-based (manual reset)
-    ('google',          'monthly', 10000, INTERVAL '30 days'),
-    ('hunter',          'monthly', 25,   INTERVAL '30 days'),
-    ('opencorporates',  'monthly', 200,   INTERVAL '30 days'),
-    ('search',          'monthly', 100,   INTERVAL '30 days'),
-    ('serp',            'monthly', 100,   INTERVAL '30 days'),
-    ('tomtom',          'daily',   2500,  INTERVAL '1 day')
+    ('duckduckgo',          'monthly', 100,   INTERVAL '30 days'),
+    ('foursquare',          'fixed',   20000, NULL),               -- credit-based (manual reset)
+    ('google',              'monthly', 10000, INTERVAL '30 days'),
+    ('hunter',              'monthly', 25,    INTERVAL '30 days'),
+    ('opencorporates',      'monthly', 200,   INTERVAL '30 days'),
+    ('search',              'monthly', 100,   INTERVAL '30 days'),
+    ('serp',                'monthly', 100,   INTERVAL '30 days'),
+    ('tomtom',              'daily',   2500,  INTERVAL '1 day'),
+    ('apifyContactInfoSDK', 'monthly', 500,   INTERVAL '30 days'),
+    ('parseHubSDK',         'monthly', 200,   INTERVAL '30 days');
   ON CONFLICT (sdk_name) DO NOTHING;
 
   -- 🔄 Auto-update updated_at on row changes
@@ -205,7 +207,8 @@ import { scrapeEmailFromWebsite } from "../utils/scrapeEmailFromWebsite"
 Include clear comments (//1. do sth), use one-line concise code & ternaries, and avoid tiny abbreviations like idx, ctx, or e.
 Make sure phone numbers does not include spaces slashes dashes or any other symbols - it must be numbers only including country code e.g "441642296631"
 
-Existing SDKs: DuckduckGoSDK, FoursquareSDK, GoogleCustomSearchSDK, HunterSDK, OpenCorporatesSDK, searchSDK, SerpSDK, TomTomSDK
+Existing SDKs: ApifyContactInfoSDK, DuckduckGoSDK, FoursquareSDK, GoogleCustomSearchSDK, HunterSDK,
+ OpenCorporatesSDK, ScrapingBeeSDK, searchSDK, SerpSDK, TomTomSDK
 DO NOT USE list:
  1. BingSearchSDK  because "Product to be retired Bing Search and Bing Custom Search APIs will be retired on 11th August 2025"
  2. ClearbitSDK because ❗API keys are available for Clearbit accounts created in 2023 and earlier. If you signed up in 2024,
@@ -214,9 +217,38 @@ DO NOT USE list:
  4. NominatimSDK require card to get API key
  5. YelpSDK because it's not free
  6. PuppeteerGoogleMapsSDK because it's Runtime.OutOfMemory and max size is 50MB (86MB)
-
+ 6. OutscraperSDK because it required to link card and also it will charge for outside free limit but I want to disable any charges
+ 7. ParseHub - outdated shi* with empty UI https://i.imgur.com/kKbRqZ6.png and also I need to download some... - too complicated
 
 [INCLUDE 1 EXAMPLE OF SDK HERE]
 
 Now send me concise files - each file represents SDK that allows to scrape leads by "keyword" and "location" and "limit"
 limit it's a number that limits usage to stay within free tier - if input is outside of free tier per then return error as string
+
+
+
+
+
+
+
+
+
+Recent logs:
+```
+🔍 duckduckGoSDK: fetching 6 leads in Germany North-North...
+✅ duckduckGoSDK: got 0 leads
+🔍 foursquareSDK: fetching 1 leads in Germany North-North...
+✅ foursquareSDK: got 1 leads
+🔍 googleCustomSearchSDK: fetching 1 leads in Germany North-North...
+✅ googleCustomSearchSDK: got 1 leads
+🔍 hunterSDK: fetching 1 leads in Germany North-North...
+✅ hunterSDK: got 0 leads
+🔍 openCorporatesSDK: fetching 1 leads in Germany North-North...
+❌ openCorporatesSDK error: OpenCorporates search failed: OpenCorporates API error: [object Object]
+🔍 tomtomSDK: fetching 1 leads in Germany North-North...
+✅ tomtomSDK: got 1 leads
+🔍 apifyContactInfoSDK: fetching 1 leads in Germany North-North...
+❌ apifyContactInfoSDK error: URLs array is required
+🔍 scrapingBeeSDK: fetching 1 leads in Germany North-North...
+❌ scrapingBeeSDK error: Error: ScrapingBee API error: 400
+```

@@ -5,7 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FoursquareSDK = void 0;
 const node_fetch_1 = __importDefault(require("node-fetch"));
-const scrapeEmailFromWebsite_1 = require("../utils/scrapeEmailFromWebsite");
+const scrapeContactsFromWebsite_1 = require("../utils/scrapeContactsFromWebsite");
 /**
  * Foursquare Places API SDK
  * FREE: 1,000 API calls/day (30k/month)
@@ -84,7 +84,8 @@ class FoursquareSDK {
                     let phone = place.tel || "";
                     let email = "";
                     // 🕸️ Scrape website for email
-                    email = website ? await (0, scrapeEmailFromWebsite_1.scrapeEmailFromWebsite)(website).catch(() => "") : "";
+                    email = website ? (await (0, scrapeContactsFromWebsite_1.scrapeContactsFromWebsite)(website)).email : "";
+                    phone = website ? (await (0, scrapeContactsFromWebsite_1.scrapeContactsFromWebsite)(website)).phone : "";
                     // 🌍 Scrape internet if no contact
                     if (!email && !phone) {
                         const e = await this.scrapeContactFromInternet(company, address);

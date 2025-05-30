@@ -11,6 +11,8 @@ import { OpenCorporatesSDK } from "../SDK/OpenCorporatesSDK";
 import { SearchSDK } from "../SDK/SearchSDK";
 import { SerpSDK } from "../SDK/SerpSDK";
 import { TomTomSDK } from "../SDK/TomTomSDK";
+import { ApifyContactInfoSDK } from "../SDK/ApifyContactInfoSDK";
+import { ScrapingBeeSDK } from "../SDK/ScrapingBeeSDK";
 
 export function initializeClients() {
   // 1. Define mutable array
@@ -50,6 +52,8 @@ export function initializeClients() {
       searchSDK: new SearchSDK(process.env.SEARCH_API_KEY),
       serpSDK: new SerpSDK(process.env.SERP_API_KEY),
       tomtomSDK: new TomTomSDK(process.env.TOM_TOM_API_KEY),
+      apifyContactInfoSDK: new ApifyContactInfoSDK(process.env.APIFY_API_KEY),
+      scrapingBeeSDK: new ScrapingBeeSDK(process.env.SCRAPING_BEE_API_KEY),
     }
   } catch (error: unknown) {
     return `Client initialization failed: ${error instanceof Error ? error.message : String(error)}`

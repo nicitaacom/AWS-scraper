@@ -1,6 +1,6 @@
 import fetch from "node-fetch"
 import { Lead } from "../interfaces/interfaces"
-import { scrapeEmailFromWebsite } from "../utils/scrapeEmailFromWebsite"
+import { scrapeContactsFromWebsite } from "../utils/scrapeContactsFromWebsite"
 
 /**
  * Google Custom Search API SDK
@@ -77,8 +77,8 @@ export class GoogleCustomSearchSDK {
             // First: Scrape from website if available
             if (website) {
               const [emailResult, phoneResult] = await Promise.allSettled([
-                scrapeEmailFromWebsite(website),
-                this.scrapePhoneFromWebsite(website)
+                (await scrapeContactsFromWebsite(website)).email,
+                (await scrapeContactsFromWebsite(website)).phone
               ])
               
               email = emailResult.status === 'fulfilled' ? emailResult.value || this.extractEmail(item.snippet) : this.extractEmail(item.snippet)
@@ -237,51 +237,6 @@ export class GoogleCustomSearchSDK {
     try {
       const result = await this.scrapeContactFromInternet(businessName, address)
       return result.email
-    } catch (error) {
-      return ""
-    }
-  }
-  
-  private async scrapePhoneFromWebsite(website: string): Promise<string> {
-    try {
-      if (!website?.trim()) return ""
-      
-      let url = website.trim()
-      if (!url.startsWith('http')) {
-        url = 'https://' + url
-      }
-      
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        },
-        timeout: 10000
-      })
-      
-      if (!response.ok) return ""
-      
-      const html = await response.text()
-      const cleanText = html
-        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-        .replace(/<[^>]*>/g, ' ')
-        .replace(/\s+/g, ' ')
-      
-      const phonePatterns = [
-        /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g,
-        /\b\(\d{3}\)\s?\d{3}[-.]?\d{4}\b/g,
-        /\b\+\d{1,3}[-.\s]?\d{3,4}[-.\s]?\d{3,4}[-.\s]?\d{3,4}\b/g,
-        /\btel:[\+]?[\d\-\(\)\s]+/gi
-      ]
-      
-      for (const pattern of phonePatterns) {
-        const matches = cleanText.match(pattern)
-        if (matches && matches[0]) {
-          return matches[0].replace('tel:', '').trim()
-        }
-      }
-      
-      return ""
     } catch (error) {
       return ""
     }
