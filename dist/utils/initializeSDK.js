@@ -8,7 +8,7 @@ const client_lambda_1 = require("@aws-sdk/client-lambda");
 const client_s3_1 = require("@aws-sdk/client-s3");
 const supabase_js_1 = require("@supabase/supabase-js");
 const openai_1 = __importDefault(require("openai"));
-const pusher_1 = __importDefault(require("pusher"));
+const pusher_1 = require("../libs/pusher");
 const FoursquareSDK_1 = require("../SDK/FoursquareSDK");
 const GoogleCustomSearchSDK_1 = require("../SDK/GoogleCustomSearchSDK");
 const HunterSDK_1 = require("../SDK/HunterSDK");
@@ -41,7 +41,7 @@ function initializeClients() {
             lambda: new client_lambda_1.LambdaClient(awsConfig),
             s3: new client_s3_1.S3Client(awsConfig),
             supabase: (0, supabase_js_1.createClient)(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } }),
-            pusher: new pusher_1.default({ appId, key, secret, cluster: "eu", useTLS: true }),
+            pusher: new pusher_1.TypedPusher({ appId, key, secret, cluster: "eu", useTLS: true }),
             openai: new openai_1.default({ apiKey: process.env.OPENAI_KEY }),
             // duckduckGoSDK:new DuckDuckGoSDK(), // this DOES NOT WORK (tweacked 3 times with AI)
             foursquareSDK: new FoursquareSDK_1.FoursquareSDK(process.env.FOURSQUARE_API_KEY),

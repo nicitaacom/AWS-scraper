@@ -6,7 +6,7 @@ import Pusher from "pusher"
 import OpenAI from "openai"
 import fetch from "node-fetch"
 import { v4 as uuidv4 } from "uuid"
-import { JobPayload, Lead } from "./interfaces/interfaces"
+import { JobError, JobPayload, Lead } from "./interfaces/interfaces"
 import { Scraper } from "./SDK/scraper"
 import { initializeClients } from "./utils/initializeSDK"
 import { formatDuration, getCurrentDate } from "./utils/date-utils"
@@ -14,7 +14,7 @@ import { checkSDKAvailability } from "./utils/checkSDKAvailability"
 
 // ------ Constants ------ //
 export const BUCKET = process.env.S3_BUCKET || "scraper-files-eu-central-1"
-const MAX_RUNTIME_MS = 13 * 60 * 1000
+export const MAX_RUNTIME_MS = 13 * 60 * 1000 // export it to use in Scraper because somtimes it get stuck
 const LEADS_PER_MINUTE = 80 / 3
 const MAX_LEADS_PER_JOB = Math.floor((MAX_RUNTIME_MS / 60000) * LEADS_PER_MINUTE) // 346
 const PROGRESS_UPDATE_INTERVAL = 10000
@@ -31,8 +31,8 @@ const startProgressUpdater = (id: string, channelId: string, getCurrentCount: ()
       const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000)
       const formattedTime = formatDuration(elapsedSeconds)
       const message = `⏱️ Progress: ${currentCount} leads found in ${formattedTime}\n${currentLogs}`
-      await scraper.updateDBScraper(id, { leads_count: currentCount, message })
-      await pusher.trigger(channelId, "scraper:update", { id, leads_count: currentCount, message })
+      await scraper.updateDBScraper(id, { leads_count: currentCount, message, status:'pending' })
+      await pusher.trigger(channelId, "scraper:update", { id, leads_count: currentCount, message,  })
     } catch (error) {
       console.error(`🔄 Progress update error for ${id}:`, error)
     }
@@ -143,7 +143,7 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
       if (!freeTierCheck.valid) {
         executionLogs += `❌ Free tier exceeded: ${freeTierCheck.error}\n`
         await scraper.updateDBScraper(id, { status: "error", message: executionLogs })
-        await pusher.trigger(channelId, "scraper:error", { id, error: freeTierCheck.error || "Free tier limit exceeded" })
+        await pusher.trigger(channelId, "scraper:error", { id, message: freeTierCheck.error || "Free tier limit exceeded", })
         return { statusCode: 400, body: JSON.stringify({ error: freeTierCheck.error }) }
       }
     }
@@ -153,7 +153,7 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
     if (availableSDKs.length === 0) {
       executionLogs += `❌ All SDKs exhausted: ${sdkStatus}\n`
       await scraper.updateDBScraper(id, { status: "error", message: executionLogs })
-      await pusher.trigger(channelId, "scraper:error", { id, error: "All SDK limits reached. Please try again later." })
+      await pusher.trigger(channelId, "scraper:error", { id, message: "All SDK limits reached. Please try again later.", })
       return { statusCode: 429, body: JSON.stringify({ error: "All SDK limits reached" }) }
     }
 
@@ -183,17 +183,17 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
     let citiesToScrape = cities || []
     if (!citiesToScrape.length) {
       executionLogs += `🤖 Generating cities for "${location}" (isReverse: ${isReverse})\n`
-      await scraper.updateDBScraper(id, { message: `🤖 Job${jobNumber} - Generating cities using AI...\n${executionLogs}` })
+      await scraper.updateDBScraper(id, { message: `🤖 Job${jobNumber} - Generating cities using AI...\n${executionLogs}`,status:'pending' })
       await pusher.trigger(channelId, "scraper:update", { id, message: `🤖 Generating cities for processing...` })
       
       const openaiStart = Date.now()
-      const generatedCities = await scraper.generateRegionalChunks(location, isReverse)
+      const generatedCities = await scraper.generateCitiesFromRegion(location, isReverse)
       const openaiTime = Math.round((Date.now() - openaiStart) / 1000)
       
       if (typeof generatedCities === 'string') {
         executionLogs += `❌ City generation failed (${openaiTime}s): ${generatedCities}\n`
-        await scraper.updateDBScraper(id, { status: "error", message: executionLogs })
-        await pusher.trigger(channelId, "scraper:error", { id, error: `Failed to generate cities: ${generatedCities}` })
+        await scraper.updateDBScraper(id, { message: executionLogs,status:'error' })
+        await pusher.trigger(channelId, "scraper:error", { id, message: `Failed to generate cities: ${generatedCities}`,job_number:jobNumber } ) 
         return { statusCode: 500, body: JSON.stringify({ error: generatedCities }) }
       }
       
@@ -255,11 +255,14 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
       const tempUrl = await getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: tempFileName }), { expiresIn: 3600 })
       
       await scraper.updateDBScraper(id, { 
+        status:'pending',
         downloadable_link: tempUrl, 
         leads_count: leads.length,
-        message: `🔄 Job${jobNumber} retrying (${retryCount + 1}/${MAX_RETRIES}): ${leads.length} leads found, searching for ${remainingLeads} more...\n${executionLogs}` 
+        message: `🔄 Job${jobNumber} retrying (${retryCount + 1}/${MAX_RETRIES}): ${leads.length} leads found, searching for ${remainingLeads} more...
+        ${executionLogs}`,
       })
-      await pusher.trigger(channelId, "scraper:update", { id, leads_count: leads.length, message: `🔄 Retrying: ${leads.length} leads found...` })
+      await pusher.trigger(channelId, "scraper:update", 
+        { id, leads_count: leads.length, message: `🔄 Retrying: ${leads.length} leads found...` })
       
       return handler({ ...event, retryCount: retryCount + 1 })
     }
@@ -321,13 +324,14 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
         completed_in_s: processingTime,
         status: "completed",
         leads_count: leads.length,
-        message: `✅ Job${jobNumber} done (${formatDuration(processingTime)}) - ${leads.length} leads collected 🔥\n🔗 Chaining to Job${jobNumber + 1} for remaining ${remainingLeads} leads 😎\n${executionLogs}`
+        message: `✅ Job${jobNumber} done (${formatDuration(processingTime)}) - ${leads.length} leads collected 🔥\n
+        🔗 Chaining to Job${jobNumber + 1} for remaining ${remainingLeads} leads 😎\n${executionLogs}`
       })
 
       await pusher.trigger(channelId, "scraper:update", {
         id,
         leads_count: leads.length,
-        message: `✅ Job${jobNumber} complete! Continuing with Job${jobNumber + 1} for ${remainingLeads} more leads...`
+        message: `✅ Job${jobNumber} complete! Continuing with Job${jobNumber + 1} for ${remainingLeads} more leads...`,
       })
 
       // Invoke next job
@@ -335,7 +339,7 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
       if (!invokeResult.success) {
         executionLogs += `❌ Failed to invoke Job${jobNumber + 1}: ${invokeResult.error}\n`
         await scraper.updateDBScraper(id, { status: "error", message: executionLogs })
-        await pusher.trigger(channelId, "scraper:error", { id, error: `Chain failed: ${invokeResult.error}` })
+        await pusher.trigger(channelId, "scraper:error", { id, message: `Chain failed: ${invokeResult.error}`, })
       }
 
       return {
@@ -377,7 +381,6 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
         completed_in_s: processingTime,
         leads_count: leads.length,
         message: finalMessage,
-        status: 'completed'
       })
 
       const responseMessage = foundRatio < 0.8 
@@ -415,7 +418,7 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
       })
       await pusher.trigger(event.channelId, "scraper:error", { 
         id: event.id, 
-        error: `Job${event.jobNumber || 1} failed: ${(error as Error).message}` 
+        message: `Job${event.jobNumber || 1} failed: ${(error as Error).message}`,
       })
     } catch (notifyError: unknown) {
       console.error("❌ Failed to handle error state:", notifyError)

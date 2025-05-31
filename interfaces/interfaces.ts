@@ -21,6 +21,47 @@ export type JobPayload = {
   originalJobId?: string // ID of the first job in the chain (for tracking)
 }
 
+export interface SDKAllocation {
+  sdk: any
+  sdkName: string
+  cities: string[]
+  leadsPerCity: number
+  availableCredits: number
+}
+
+export interface ScrapingResult {
+  leads: Lead[]
+  failedCities: string[]
+  usedCredits: number
+}
+
+
+export interface ScrapingError {
+  type: 'NOT_FOUND' | 'RATE_LIMITED' | 'TIMEOUT' | 'API_ERROR' | 'UNKNOWN'
+  message: string
+  city: string
+  sdkName: string
+  statusCode?: number
+  retryable: boolean
+}
+
+/** City processing result with detailed error info */
+export interface CityResult {
+  city: string
+  leads: Lead[]
+  error?: ScrapingError
+  usedQuota: number // Track actual API calls made
+}
+
+/** SDK processing summary */
+export interface SDKProcessingSummary {
+  leads: Lead[]
+  failedCities: string[]
+  retriableCities: string[]
+  permanentFailures: string[]
+  totalUsed: number
+}
+
 /** SDK availability check result */
 export type SDKAvailability = {
   available: string[]
@@ -37,34 +78,6 @@ export type ProgressUpdate = {
   elapsed_time?: number
 }
 
-/** Job completion data */
-export type JobCompletion = {
-  id: string
-  downloadable_link: string
-  completed_in_s: number
-  leads_count: number
-  message: string
-  status: "completed"
-  job_number?: number
-  chain_completed?: boolean
-}
-
-/** Job error data */
-export type JobError = {
-  id: string
-  error: string
-  job_number?: number
-}
-
-/** Database scraper update payload */
-export type ScraperDBUpdate = Partial<{
-  downloadable_link: string
-  completed_in_s: number
-  status: "pending" | "completed" | "error"
-  leads_count: number
-  message: string
-}>
-
 /** SDK free tier usage update */
 export type SDKUsageUpdate = {
   sdkName: string
@@ -72,10 +85,57 @@ export type SDKUsageUpdate = {
   increment?: boolean
 }
 
+
+export type DBUpdate = {
+  status: "pending" | "error" | "completed" // adjust if needed
+} & Partial<{
+  downloadable_link: string
+  completed_in_s: number
+  leads_count: number
+  message: string
+}>
+
+
+
+// pusher + DB related interfaces
+
+export type JobCompletion = {
+  id: string
+  downloadable_link: string
+  completed_in_s: number
+  leads_count: number
+  message: string
+  // decided to update status on frontend in order to keep code consicer
+  job_number?: number
+  chain_completed?: boolean
+}
+
+export type JobUpdate = {
+  id:string
+  // don't put completed_in_s because this is only for time of all sequences
+// decided to update status on frontend in order to keep code consicer
+  leads_count?: number
+  message: string // required because user need to know what's up
+}
+
+
+export type JobError = {
+  id: string
+  message: string
+  // decided to update status on frontend in order to keep code consicer
+  job_number?: number
+}
+
+export type PusherEventMap = {
+  'scraper:error': JobError
+  'scraper:update': JobUpdate
+  'scraper:completed': JobCompletion
+}
+
 /**
  * Also I have scraper class that initialized as new Scraper()
  * public validateInput = (payload: any): { valid: boolean; error?: string } => {
- * public async generateRegionalChunks(location: string, isReverse: boolean): Promise<string[] | string> {
+ * public async generateCitiesFromRegion(location: string, isReverse: boolean): Promise<string[] | string> {
  * public checkAndMergeResults = async (parentId: string, channelId: string,s3BucketName:string): Promise<void> => {
  * public updateDBScraper = async (id: string,data: Partial<{ downloadable_link: string; completed_in_s: number; 
  * status: string; leads_count: number; message: string }>): Promise<void> => {

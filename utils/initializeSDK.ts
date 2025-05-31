@@ -2,7 +2,7 @@ import { LambdaClient } from "@aws-sdk/client-lambda"
 import { S3Client } from "@aws-sdk/client-s3"
 import { createClient } from "@supabase/supabase-js"
 import OpenAI from "openai"
-import Pusher from "pusher"
+import {TypedPusher,pusherInstance} from "../libs/pusher"
 import { FoursquareSDK } from "../SDK/FoursquareSDK";
 import { GoogleCustomSearchSDK } from "../SDK/GoogleCustomSearchSDK";
 import { HunterSDK } from "../SDK/HunterSDK";
@@ -41,7 +41,7 @@ export function initializeClients() {
       lambda: new LambdaClient(awsConfig),
       s3: new S3Client(awsConfig),
       supabase: createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } }),
-      pusher: new Pusher({ appId, key, secret, cluster: "eu", useTLS: true }),
+      pusher: new TypedPusher({ appId, key, secret, cluster: "eu", useTLS: true }),
       openai: new OpenAI({ apiKey: process.env.OPENAI_KEY }),
 
       // duckduckGoSDK:new DuckDuckGoSDK(), // this DOES NOT WORK (tweacked 3 times with AI)

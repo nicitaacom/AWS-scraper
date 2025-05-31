@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.handler = exports.MAX_RETRIES = exports.BUCKET = void 0;
+exports.handler = exports.MAX_RETRIES = exports.MAX_RUNTIME_MS = exports.BUCKET = void 0;
 const client_s3_1 = require("@aws-sdk/client-s3");
 const s3_request_presigner_1 = require("@aws-sdk/s3-request-presigner");
 const node_fetch_1 = __importDefault(require("node-fetch"));
@@ -14,9 +14,9 @@ const date_utils_1 = require("./utils/date-utils");
 const checkSDKAvailability_1 = require("./utils/checkSDKAvailability");
 // ------ Constants ------ //
 exports.BUCKET = process.env.S3_BUCKET || "scraper-files-eu-central-1";
-const MAX_RUNTIME_MS = 13 * 60 * 1000;
+exports.MAX_RUNTIME_MS = 13 * 60 * 1000; // export it to use in Scraper because somtimes it get stuck
 const LEADS_PER_MINUTE = 80 / 3;
-const MAX_LEADS_PER_JOB = Math.floor((MAX_RUNTIME_MS / 60000) * LEADS_PER_MINUTE); // 346
+const MAX_LEADS_PER_JOB = Math.floor((exports.MAX_RUNTIME_MS / 60000) * LEADS_PER_MINUTE); // 346
 const PROGRESS_UPDATE_INTERVAL = 10000;
 exports.MAX_RETRIES = 3;
 const MAX_JOBS_ALLOWED = 1509;
@@ -30,8 +30,8 @@ const startProgressUpdater = (id, channelId, getCurrentCount, getCurrentLogs, st
             const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
             const formattedTime = (0, date_utils_1.formatDuration)(elapsedSeconds);
             const message = `⏱️ Progress: ${currentCount} leads found in ${formattedTime}\n${currentLogs}`;
-            await scraper.updateDBScraper(id, { leads_count: currentCount, message });
-            await pusher.trigger(channelId, "scraper:update", { id, leads_count: currentCount, message });
+            await scraper.updateDBScraper(id, { leads_count: currentCount, message, status: 'pending' });
+            await pusher.trigger(channelId, "scraper:update", { id, leads_count: currentCount, message, });
         }
         catch (error) {
             console.error(`🔄 Progress update error for ${id}:`, error);
@@ -136,7 +136,7 @@ const handler = async (event) => {
             if (!freeTierCheck.valid) {
                 executionLogs += `❌ Free tier exceeded: ${freeTierCheck.error}\n`;
                 await scraper.updateDBScraper(id, { status: "error", message: executionLogs });
-                await pusher.trigger(channelId, "scraper:error", { id, error: freeTierCheck.error || "Free tier limit exceeded" });
+                await pusher.trigger(channelId, "scraper:error", { id, message: freeTierCheck.error || "Free tier limit exceeded", });
                 return { statusCode: 400, body: JSON.stringify({ error: freeTierCheck.error }) };
             }
         }
@@ -145,7 +145,7 @@ const handler = async (event) => {
         if (availableSDKs.length === 0) {
             executionLogs += `❌ All SDKs exhausted: ${sdkStatus}\n`;
             await scraper.updateDBScraper(id, { status: "error", message: executionLogs });
-            await pusher.trigger(channelId, "scraper:error", { id, error: "All SDK limits reached. Please try again later." });
+            await pusher.trigger(channelId, "scraper:error", { id, message: "All SDK limits reached. Please try again later.", });
             return { statusCode: 429, body: JSON.stringify({ error: "All SDK limits reached" }) };
         }
         if (IS_DEBUGGING)
@@ -171,15 +171,15 @@ const handler = async (event) => {
         let citiesToScrape = cities || [];
         if (!citiesToScrape.length) {
             executionLogs += `🤖 Generating cities for "${location}" (isReverse: ${isReverse})\n`;
-            await scraper.updateDBScraper(id, { message: `🤖 Job${jobNumber} - Generating cities using AI...\n${executionLogs}` });
+            await scraper.updateDBScraper(id, { message: `🤖 Job${jobNumber} - Generating cities using AI...\n${executionLogs}`, status: 'pending' });
             await pusher.trigger(channelId, "scraper:update", { id, message: `🤖 Generating cities for processing...` });
             const openaiStart = Date.now();
-            const generatedCities = await scraper.generateRegionalChunks(location, isReverse);
+            const generatedCities = await scraper.generateCitiesFromRegion(location, isReverse);
             const openaiTime = Math.round((Date.now() - openaiStart) / 1000);
             if (typeof generatedCities === 'string') {
                 executionLogs += `❌ City generation failed (${openaiTime}s): ${generatedCities}\n`;
-                await scraper.updateDBScraper(id, { status: "error", message: executionLogs });
-                await pusher.trigger(channelId, "scraper:error", { id, error: `Failed to generate cities: ${generatedCities}` });
+                await scraper.updateDBScraper(id, { message: executionLogs, status: 'error' });
+                await pusher.trigger(channelId, "scraper:error", { id, message: `Failed to generate cities: ${generatedCities}`, job_number: jobNumber });
                 return { statusCode: 500, body: JSON.stringify({ error: generatedCities }) };
             }
             citiesToScrape = generatedCities;
@@ -222,9 +222,11 @@ const handler = async (event) => {
             await s3.send(new client_s3_1.PutObjectCommand({ Bucket: exports.BUCKET, Key: tempFileName, Body: tempCsv, ContentType: "text/csv" }));
             const tempUrl = await (0, s3_request_presigner_1.getSignedUrl)(s3, new client_s3_1.GetObjectCommand({ Bucket: exports.BUCKET, Key: tempFileName }), { expiresIn: 3600 });
             await scraper.updateDBScraper(id, {
+                status: 'pending',
                 downloadable_link: tempUrl,
                 leads_count: leads.length,
-                message: `🔄 Job${jobNumber} retrying (${retryCount + 1}/${exports.MAX_RETRIES}): ${leads.length} leads found, searching for ${remainingLeads} more...\n${executionLogs}`
+                message: `🔄 Job${jobNumber} retrying (${retryCount + 1}/${exports.MAX_RETRIES}): ${leads.length} leads found, searching for ${remainingLeads} more...
+        ${executionLogs}`,
             });
             await pusher.trigger(channelId, "scraper:update", { id, leads_count: leads.length, message: `🔄 Retrying: ${leads.length} leads found...` });
             return (0, exports.handler)({ ...event, retryCount: retryCount + 1 });
@@ -279,19 +281,20 @@ const handler = async (event) => {
                 completed_in_s: processingTime,
                 status: "completed",
                 leads_count: leads.length,
-                message: `✅ Job${jobNumber} done (${(0, date_utils_1.formatDuration)(processingTime)}) - ${leads.length} leads collected 🔥\n🔗 Chaining to Job${jobNumber + 1} for remaining ${remainingLeads} leads 😎\n${executionLogs}`
+                message: `✅ Job${jobNumber} done (${(0, date_utils_1.formatDuration)(processingTime)}) - ${leads.length} leads collected 🔥\n
+        🔗 Chaining to Job${jobNumber + 1} for remaining ${remainingLeads} leads 😎\n${executionLogs}`
             });
             await pusher.trigger(channelId, "scraper:update", {
                 id,
                 leads_count: leads.length,
-                message: `✅ Job${jobNumber} complete! Continuing with Job${jobNumber + 1} for ${remainingLeads} more leads...`
+                message: `✅ Job${jobNumber} complete! Continuing with Job${jobNumber + 1} for ${remainingLeads} more leads...`,
             });
             // Invoke next job
             const invokeResult = await scraper.invokeChildLambda(nextJobPayload);
             if (!invokeResult.success) {
                 executionLogs += `❌ Failed to invoke Job${jobNumber + 1}: ${invokeResult.error}\n`;
                 await scraper.updateDBScraper(id, { status: "error", message: executionLogs });
-                await pusher.trigger(channelId, "scraper:error", { id, error: `Chain failed: ${invokeResult.error}` });
+                await pusher.trigger(channelId, "scraper:error", { id, message: `Chain failed: ${invokeResult.error}`, });
             }
             return {
                 statusCode: 202,
@@ -330,7 +333,6 @@ const handler = async (event) => {
                 completed_in_s: processingTime,
                 leads_count: leads.length,
                 message: finalMessage,
-                status: 'completed'
             });
             const responseMessage = foundRatio < 0.8
                 ? (isUnrealisticRequest ? "⚠️ Location may not have enough businesses of this type" : "⚠️ Not enough leads found in this location")
@@ -365,7 +367,7 @@ const handler = async (event) => {
             });
             await pusher.trigger(event.channelId, "scraper:error", {
                 id: event.id,
-                error: `Job${event.jobNumber || 1} failed: ${error.message}`
+                message: `Job${event.jobNumber || 1} failed: ${error.message}`,
             });
         }
         catch (notifyError) {

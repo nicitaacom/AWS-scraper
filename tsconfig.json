@@ -7,8 +7,19 @@
     "rootDir": "./",
     "strict": true,
     "esModuleInterop": true,
-    "skipLibCheck": true
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "typeRoots": ["./node_modules/@types"],
+    "baseUrl": ".",
+    "declaration": true,
+    "declarationMap": true
   },
-  "include": ["index.ts", "env.d.ts", "src/**/*", "utils/**/*", "const/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "index.ts",
+    "env.d.ts", 
+    "utils/**/*", 
+    "libs/**/*",  
+    "interfaces/**/*"
+  ],
+  "exclude": ["node_modules", "dist", "types"]
 }
