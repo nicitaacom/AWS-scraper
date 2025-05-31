@@ -39,20 +39,43 @@ export declare class Scraper {
      * Updates database record with comprehensive error handling
      */
     updateDBScraper: (id: string, data: DBUpdate) => Promise<void>;
-    /** Scrapes leads with optimized parallel SDK allocation */
+    /** Scrapes leads with retry and SDK redistribution logic */
     scrapeLeads(keyword: string, cities: string[], targetLimit: number, existingLeads: Lead[], progressCallback: (count: number) => void, logsCallback: (logs: string) => void, sdks: Record<string, any>): Promise<Lead[]>;
-    /** Allocates cities evenly across available SDKs based on their credit limits */
-    private allocateCitiesToSDKs;
-    /** Processes multiple SDKs in parallel with timeout protection */
-    private processSDKsInParallel;
-    /** Processes a single SDK's allocated cities */
-    private processSDKAllocation;
-    /** Retries failed cities with remaining available SDKs */
-    private retryFailedCities;
-    private categorizeError;
+    /** Assigns cities to SDKs based on availability and prior attempts */
+    private createCitySDKAssignments;
+    /** Processes cities for an SDK with rate limiting */
+    private processCitiesForSDK;
+    /**
+     * Merges two lead arrays and removes duplicates
+     * @param existingLeads Current leads
+     * @param newLeads Newly scraped leads
+     * @returns Combined unique leads array
+     */
     mergeAndDeduplicateLeads: (existingLeads: Lead[], newLeads: Lead[]) => Lead[];
+    /**
+       * Removes duplicate leads based on specified fields
+       * @param leads Array of leads to deduplicate
+       * @param fields Fields to use for deduplication (defaults to email and phone)
+       * @returns Array of unique leads
+       */
     private removeDuplicateLeads;
+    /**
+     * Calculates estimated completion time based on current progress
+     * @param startTime Start timestamp
+     * @param currentCount Current leads count
+     * @param targetCount Target leads count
+     * @returns Estimated completion time in seconds
+     */
     calculateEstimatedCompletion: (startTime: number, currentCount: number, targetCount: number) => number;
+    /** Redistributes failed cities to other SDKs */
+    /** Enhanced redistribution with failure tracking and smart SDK selection */
+    private redistributeFailedCities;
+    private categorizeError;
+    /**
+     * Generates CSV content from leads array
+     * @param leads Array of lead objects
+     * @returns CSV string with proper escaping
+     */
     generateCSV: (leads: Lead[]) => string;
     /**
      * Updates SDK free tier usage with comprehensive error handling

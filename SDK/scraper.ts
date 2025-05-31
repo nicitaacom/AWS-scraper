@@ -384,8 +384,6 @@ public updateDBScraper = async (id:string,data:DBUpdate): Promise<void> => {
 
 
 
-
-
 /** Scrapes leads with retry and SDK redistribution logic */
 public async scrapeLeads(
   keyword: string,
@@ -396,132 +394,114 @@ public async scrapeLeads(
   logsCallback: (logs: string) => void,
   sdks: Record<string, any>
 ): Promise<Lead[]> {
-  // ------ 1. Initialize scraping session ------ //
-  let logs = `🏙️ Processing ${cities.length} cities for "${keyword}"\n🎯 Target: ${targetLimit} leads (${existingLeads.length} existing)\n`
+  // ------ 1. Setup the vibes ------ //
+  let logs = `🚀 Scraping ${cities.length} cities for "${keyword}"\n🎯 Target: ${targetLimit} leads (already got ${existingLeads.length})\n`
   logsCallback(logs)
-  
-  // 1.1 [STATE]: Initialize lead tracking and deduplication
+
   let allLeads: Lead[] = [...existingLeads]
   const seenCompanies = new Set(existingLeads.map(lead => `${lead.company}-${lead.address}`.toLowerCase().trim()))
-  
-  // 1.2 [TRACKING]: SDK attempt tracking and permanent failure tracking
   const triedSDKs = new Map(cities.map(city => [city, new Set<string>()]))
-  const permanentFailures = new Set<string>() // Cities with confirmed no businesses
+  const permanentFailures = new Set<string>()
   let attempt = 0
 
-  // ------ 2. Main retry loop with enhanced error handling ------ //
   while (allLeads.length < targetLimit && attempt < MAX_RETRIES) {
     attempt++
-    const remainingNeeded = targetLimit - allLeads.length
-    
-    // 2.1 [AVAILABILITY]: Check SDK availability and limits
+    const remaining = targetLimit - allLeads.length
     const { available, status, sdkLimits } = await checkSDKAvailability(this.supabaseAdmin)
     const availableSDKs = Object.keys(sdks).filter(sdk => available.includes(sdk))
-    
-    logs += `\n🔄 Attempt ${attempt}/${MAX_RETRIES} - Need ${remainingNeeded} more leads\n${status}\n🚀 Available SDKs: ${availableSDKs.join(", ")}\n`
+
+    logs += `\n🔁 Attempt ${attempt}/${MAX_RETRIES} - still need ${remaining}\n${status}\n📦 SDKs ready to go: ${availableSDKs.join(", ")}\n`
     logsCallback(logs)
 
-    // 2.2 [VALIDATION]: Early exit if no SDKs available
     if (!availableSDKs.length) {
-      logs += "❌ No available SDKs - stopping\n"
+      logs += "❌ All SDKs on cooldown - halting run\n"
       logsCallback(logs)
       break
     }
 
-    // 2.3 [OPTIMIZATION]: Filter out permanently failed cities
     const activeCities = cities.filter(city => !permanentFailures.has(city))
     if (!activeCities.length) {
-      logs += "❌ All cities exhausted - no more businesses to find\n"
+      logs += "📭 Every city already done - nothing left to scrape\n"
       logsCallback(logs)
       break
     }
 
-    // 2.4 [ASSIGNMENT]: Create optimized city-to-SDK assignments
-    const cityAssignments = this.createCitySDKAssignments(activeCities, availableSDKs, sdkLimits, remainingNeeded, triedSDKs)
-    logs += "📋 City assignments:\n" + Object.entries(cityAssignments).map(([sdk, { cities }]) => `   ${sdk}: ${cities.length} cities`).join("\n") + "\n"
+    const cityAssignments = this.createCitySDKAssignments(activeCities, availableSDKs, sdkLimits, remaining, triedSDKs)
+    logs += "🧠 Assignments this round:\n" + Object.entries(cityAssignments).map(([sdk, { cities }]) => `   ${sdk}: ${cities.length} cities`).join("\n") + "\n"
     logsCallback(logs)
 
-    // ------ 3. Process cities with enhanced error categorization ------ //
     const rateLimitedCities: string[] = []
     const timeoutCities: string[] = []
     let totalNewLeads = 0
 
     for (const [sdkName, { cities: assignedCities, leadsPerCity }] of Object.entries(cityAssignments)) {
       if (allLeads.length >= targetLimit) break
-      
       const sdk = sdks[sdkName]
       if (!sdk?.searchBusinesses) {
-        logs += `❌ ${sdkName} invalid - skipping\n`
+        logs += `⚠️ ${sdkName} ain't ready - skipping\n`
         continue
       }
 
-      logs += `\n🔍 ${sdkName}: Processing ${assignedCities.length} cities...\n`
-      logsCallback(logs)
-      
-      // 3.1 [PROCESSING]: Process cities with detailed error handling
+      const emoji = this.SDK_EMOJIS[sdkName] || '🤖'
+      logs += `\n${emoji} ${sdkName} taking over ${assignedCities.length} cities...\n   [${assignedCities.slice(0, 5).join(", ")}
+      ${assignedCities.length > 5 ? ", ..." : ""}]\n`
+
       const summary = await this.processCitiesForSDK(
-        sdk, sdkName, keyword, assignedCities, leadsPerCity, seenCompanies, 
+        sdk, sdkName, keyword, assignedCities, leadsPerCity, seenCompanies,
         progressCallback, logsCallback, triedSDKs
       )
 
-      // 3.2 [RESULTS]: Collect leads and categorize failures
       allLeads.push(...summary.leads)
       totalNewLeads += summary.leads.length
-      
-      // 3.3 [FAILURE_CATEGORIZATION]: Sort failures by type for smart redistribution
-      rateLimitedCities.push(...summary.retriableCities.filter(city => 
+
+      if (summary.leads.length)
+        logs += `   ✅ ${sdkName} dropped ${summary.leads.length} fresh leads 💰\n`
+
+      rateLimitedCities.push(...summary.retriableCities.filter(city =>
         triedSDKs.get(city)?.has(sdkName) && !permanentFailures.has(city)
       ))
-      timeoutCities.push(...summary.failedCities.filter(city => 
+      timeoutCities.push(...summary.failedCities.filter(city =>
         !summary.retriableCities.includes(city) && !permanentFailures.has(city)
       ))
-      
-      // 3.4 [PERMANENT_FAILURES]: Mark cities with no businesses
-      summary.permanentFailures.forEach(city => permanentFailures.add(city))
-      
-      logs += `   📊 ${sdkName} Summary: ${summary.leads.length} leads, ${summary.permanentFailures.length} no-business zones, ${summary.retriableCities.length} retriable\n`
 
-      // 3.5 [USAGE_TRACKING]: Update SDK usage in database
+      summary.permanentFailures.forEach(city => permanentFailures.add(city))
+
+      logs += `   📊 Summary: ${summary.leads.length} leads | ${summary.permanentFailures.length} no-show cities | ${summary.retriableCities.length}
+       retry needed\n`
+
       if (summary.totalUsed > 0) {
         await this.updateDBSDKFreeTier({ sdkName, usedCount: summary.totalUsed, increment: true })
       }
     }
 
-    // ------ 4. Smart redistribution of retriable failures ------ //
-    const retriableCities = [...new Set([...rateLimitedCities, ...timeoutCities])] // Deduplicate
+    const retriableCities = [...new Set([...rateLimitedCities, ...timeoutCities])]
     if (retriableCities.length && allLeads.length < targetLimit) {
-      logs += `\n🔄 Redistributing ${retriableCities.length} retriable failures...\n`
+      logs += `\n🔄 Retrying ${retriableCities.length} missed cities 🔁\n`
       logs += `   Rate limited: ${rateLimitedCities.length}, Timeouts: ${timeoutCities.length}\n`
       logsCallback(logs)
-      
-      // 4.1 [REDISTRIBUTION]: Smart redistribution with failure tracking
+
       const redistributedLeads = await this.redistributeFailedCities(
-        retriableCities, keyword, availableSDKs, sdks, sdkLimits, 
-        Math.ceil(remainingNeeded / retriableCities.length),
+        retriableCities, keyword, availableSDKs, sdks, sdkLimits,
+        Math.ceil(remaining / retriableCities.length),
         seenCompanies, progressCallback, logsCallback, triedSDKs, permanentFailures
       )
       allLeads.push(...redistributedLeads)
     }
 
-    // ------ 5. Progress evaluation and loop control ------ //
-    // 5.1 [PROGRESS_CHECK]: Stop if no progress made
     if (totalNewLeads === 0) {
-      logs += `⚠️ No new leads found in attempt ${attempt}, stopping\n`
+      logs += `⚠️ No new leads this round - wrapping up early\n`
       logsCallback(logs)
       break
     }
-    
-    // 5.2 [DELAY]: Wait before next attempt to respect rate limits
+
     if (attempt < MAX_RETRIES) await new Promise(resolve => setTimeout(resolve, 3000))
   }
 
-  // ------ 6. Final results and cleanup ------ //
-  logs += `\n🎯 Final Results: ${allLeads.length}/${targetLimit} leads (${attempt} attempts)\n`
-  logs += `🚫 Permanently failed cities: ${permanentFailures.size}\n`
-  if (permanentFailures.size > 0) {
-    logs += `   Cities with no businesses: ${Array.from(permanentFailures).join(", ")}\n`
-  }
+  logs += `\n🔥 Scraping done! Got ${allLeads.length}/${targetLimit} leads after ${attempt} rounds\n`
+  if (permanentFailures.size > 0)
+    logs += `📌 Cities with no biz found: ${Array.from(permanentFailures).join(", ")}\n`
   logsCallback(logs)
+
   return allLeads.slice(0, targetLimit)
 }
 

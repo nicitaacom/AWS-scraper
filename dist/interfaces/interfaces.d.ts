@@ -19,18 +19,6 @@ export type JobPayload = {
     jobNumber?: number;
     originalJobId?: string;
 };
-export interface SDKAllocation {
-    sdk: any;
-    sdkName: string;
-    cities: string[];
-    leadsPerCity: number;
-    availableCredits: number;
-}
-export interface ScrapingResult {
-    leads: Lead[];
-    failedCities: string[];
-    usedCredits: number;
-}
 export interface ScrapingError {
     type: 'NOT_FOUND' | 'RATE_LIMITED' | 'TIMEOUT' | 'API_ERROR' | 'UNKNOWN';
     message: string;
