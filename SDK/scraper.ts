@@ -1,7 +1,7 @@
 import OpenAI from "openai"
 import Pusher from "pusher";
 import { SupabaseClient } from "@supabase/supabase-js"
-import { DBUpdate, JobPayload, Lead, ScrapingError, SDKProcessingSummary } from "../interfaces/interfaces";
+import { DBUpdate, JobPayload, Lead, ScrapingError, SDKProcessingSummary, SDKUsageUpdate } from "../interfaces/interfaces";
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
@@ -188,10 +188,11 @@ public async generateCitiesFromRegion(location: string, isReverse: boolean): Pro
       }
     
   }
+
   /**
  * Checks completion and merges results with robust error handling
  */
-  public checkAndMergeResults = async (parentId: string, channelId: string,s3BucketName:string): Promise<void> => {
+public checkAndMergeResults = async (parentId: string, channelId: string,s3BucketName:string): Promise<void> => {
   try {
     console.log(`Checking merge status for parent: ${parentId}`)
     
@@ -712,6 +713,7 @@ public calculateEstimatedCompletion = (startTime: number, currentCount: number, 
 
  /** Redistributes failed cities to other SDKs */
  /** Enhanced redistribution with failure tracking and smart SDK selection */
+ // too much - create interface for it (send it in separated file)
 private async redistributeFailedCities(
   failedCities: string[],
   keyword: string,
@@ -966,15 +968,7 @@ public generateCSV = (leads: Lead[]): string => {
 /**
  * Updates SDK free tier usage with comprehensive error handling
  */
-public updateDBSDKFreeTier = async ({
-  sdkName,
-  usedCount,
-  increment = false
-}: {
-  sdkName: string // required SDK name
-  usedCount: number // new used count or increment delta
-  increment?: boolean // if true, add to existing instead of replace
-}): Promise<void> => {
+public updateDBSDKFreeTier = async ({sdkName,usedCount,increment = false}: SDKUsageUpdate): Promise<void> => {
   try {
     if (!sdkName || usedCount < 0) throw `❌ Invalid input for SDK update: ${sdkName}`
 

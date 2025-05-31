@@ -34,7 +34,7 @@ You're building a lead scraper Lambda function.
 
 **Response behavior**:
 - Return early with status `202` if task has been continued in next job (add payload in executionLogs for each job task)
-- Log errors in order to debug it - include emojies in error
+- Log errors in order to debug it - include emojies in error and use this.SDK_EMOJIS[sdkName] (e.g [📊SerpSDK]: some logs)
 - Use casual style in executionLogs
   For example:
   ```

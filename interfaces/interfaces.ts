@@ -22,6 +22,7 @@ export type JobPayload = {
 }
 
 
+
 export interface ScrapingError {
   type: 'NOT_FOUND' | 'RATE_LIMITED' | 'TIMEOUT' | 'API_ERROR' | 'UNKNOWN'
   message: string
@@ -120,19 +121,46 @@ export type PusherEventMap = {
 
 /**
  * Also I have scraper class that initialized as new Scraper()
- * public validateInput = (payload: any): { valid: boolean; error?: string } => {
+ * 
+ * 
+  /**
+ * Validates input payload with detailed error messages
+ * public validateInput = (payload: JobPayload): { valid: boolean; error?: string } => {
+*
+* 
  * public async generateCitiesFromRegion(location: string, isReverse: boolean): Promise<string[] | string> {
  * public checkAndMergeResults = async (parentId: string, channelId: string,s3BucketName:string): Promise<void> => {
  * public updateDBScraper = async (id: string,data: Partial<{ downloadable_link: string; completed_in_s: number; 
- * status: string; leads_count: number; message: string }>): Promise<void> => {
- * public updateDBSDKFreeTier = async ({
-      sdkName,
-      usedCount,
-      increment = false
-    }:  {
-      sdkName: string // 🧠 Required SDK name
-      usedCount: number // 🔢 New used count to set
-      increment?: boolean // ➕ If true, will increment instead of replacing
-    }): Promise<void> => {
- * public invokeChildLambda = async (payload: JobPayload): Promise<{ success: boolean; cities: string[]; error?: string }> => {
+ *        status: string; leads_count: number; message: string }>): Promise<void> => {
+  public async scrapeLeads(keyword: string,cities: string[],targetLimit: number,existingLeads: Lead[],progressCallback: (count: number) => void,
+  logsCallback: (logs: string) => void,sdks: Record<string, any>): Promise<Lead[]>
+ * 
+
+ * Assigns cities to SDKs based on availability and prior attempts
+  private createCitySDKAssignments(cities: string[],availableSDKs: string[],sdkLimits: Record<string, { available: number }>,targetLeads: number,
+  triedSDKs: Map<string, Set<string>>): Record<string, { cities: string[]; leadsPerCity: number }> {
+ *private async processCitiesForSDK(sdk: any,sdkName: string,keyword: string,cities: string[],leadsPerCity: number,
+  seenCompanies: Set<string>,progressCallback: (count: number) => void,logsCallback: (logs: string) => void,
+  triedSDKs: Map<string, Set<string>>): Promise<SDKProcessingSummary> {
+
+  public mergeAndDeduplicateLeads = (existingLeads: Lead[], newLeads: Lead[]): Lead[] => {
+
+  private removeDuplicateLeads(leads: Lead[], fields: (keyof Lead)[] = ['email', 'phone']): Lead[] {
+
+  public calculateEstimatedCompletion = (startTime: number, currentCount: number, targetCount: number): number => {
+
+  private async redistributeFailedCities(failedCities: string[],keyword: string,availableSDKs: string[],sdks: Record<string, any>,
+  sdkLimits: Record<string, any>,leadsPerCity: number,seenCompanies: Set<string>,progressCallback: (count: number) => void,
+  logsCallback: (logs: string) => void,triedSDKs: Map<string, Set<string>>,permanentFailures: Set<string>): Promise<Lead[]> {
+  
+  
+  private categorizeError(error: any, city: string, sdkName: string): ScrapingError {
+
+  public generateCSV = (leads: Lead[]): string => {
+
+  public updateDBSDKFreeTier = async ({
+
+  public updateDBSDKFreeTier = async ({sdkName,usedCount,increment = false}: SDKUsageUpdate): Promise<void> => {
+
+  public invokeChildLambda = async (payload: JobPayload): Promise<{ success: boolean; cities: string[]; error?: string }> => {
  */
