@@ -3,16 +3,16 @@ import { S3Client } from "@aws-sdk/client-s3"
 import { createClient } from "@supabase/supabase-js"
 import OpenAI from "openai"
 import Pusher from "pusher"
-import { DuckDuckGoSDK } from "../SDK/DuckDuckGoSDK";
 import { FoursquareSDK } from "../SDK/FoursquareSDK";
 import { GoogleCustomSearchSDK } from "../SDK/GoogleCustomSearchSDK";
 import { HunterSDK } from "../SDK/HunterSDK";
-import { OpenCorporatesSDK } from "../SDK/OpenCorporatesSDK";
+// import { OpenCorporatesSDK } from "../SDK/OpenCorporatesSDK";
 import { SearchSDK } from "../SDK/SearchSDK";
 import { SerpSDK } from "../SDK/SerpSDK";
 import { TomTomSDK } from "../SDK/TomTomSDK";
-import { ApifyContactInfoSDK } from "../SDK/ApifyContactInfoSDK";
-import { ScrapingBeeSDK } from "../SDK/ScrapingBeeSDK";
+import { RapidSDK } from "../SDK/RapidSDK";
+// import { ApifyContactInfoSDK } from "../SDK/doesn't work/ApifyContactInfoSDK";
+// import { ScrapingBeeSDK } from "../SDK/doesn't work/ScrapingBeeSDK";
 
 export function initializeClients() {
   // 1. Define mutable array
@@ -44,18 +44,22 @@ export function initializeClients() {
       pusher: new Pusher({ appId, key, secret, cluster: "eu", useTLS: true }),
       openai: new OpenAI({ apiKey: process.env.OPENAI_KEY }),
 
-      duckduckGoSDK:new DuckDuckGoSDK(),
+      // duckduckGoSDK:new DuckDuckGoSDK(), // this DOES NOT WORK (tweacked 3 times with AI)
       foursquareSDK: new FoursquareSDK(process.env.FOURSQUARE_API_KEY),
       googleCustomSearchSDK: new GoogleCustomSearchSDK(process.env.GOOGLE_CUSTOM_SEARCH_API_KEY,process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID),
       hunterSDK: new HunterSDK(process.env.HUNTER_API_KEY),
-      openCorporatesSDK: new OpenCorporatesSDK(),
+      // openCorporatesSDK: new OpenCorporatesSDK(),
       searchSDK: new SearchSDK(process.env.SEARCH_API_KEY),
       serpSDK: new SerpSDK(process.env.SERP_API_KEY),
       tomtomSDK: new TomTomSDK(process.env.TOM_TOM_API_KEY),
-      apifyContactInfoSDK: new ApifyContactInfoSDK(process.env.APIFY_API_KEY),
-      scrapingBeeSDK: new ScrapingBeeSDK(process.env.SCRAPING_BEE_API_KEY),
+      // apifyContactInfoSDK: new ApifyContactInfoSDK(process.env.APIFY_API_KEY),
+      // scrapingBeeSDK: new ScrapingBeeSDK(process.env.SCRAPING_BEE_API_KEY),
+      rapidSDK: new RapidSDK(process.env.RAPID_API_KEY),
+      
     }
   } catch (error: unknown) {
     return `Client initialization failed: ${error instanceof Error ? error.message : String(error)}`
   }
 }
+
+

@@ -20,7 +20,7 @@ You're building a lead scraper Lambda function.
  5. Once child job done - updateDB and trigger "scraper:update" with id and message and leads_count
  6. Pusher error should contain human-readable format and has only  id: string    error: string (so all info should be in error)
  7. Handle cases when user (using retryCount) if enter not realistic limit e.g 500000 and it's no such amount "keyword" in "location"
-
+ 8. Dynamically distributes unique cities across SDKs and redistributes failed cities to remaining SDKs for balanced parallel scraping.
 **Response behavior**:
 - Return early with status `202` if task has been splitted (console log also payload for each job task)
 - Log which regions were triggered
@@ -207,8 +207,16 @@ import { scrapeEmailFromWebsite } from "../utils/scrapeEmailFromWebsite"
 Include clear comments (//1. do sth), use one-line concise code & ternaries, and avoid tiny abbreviations like idx, ctx, or e.
 Make sure phone numbers does not include spaces slashes dashes or any other symbols - it must be numbers only including country code e.g "441642296631"
 
-Existing SDKs: ApifyContactInfoSDK, DuckduckGoSDK, FoursquareSDK, GoogleCustomSearchSDK, HunterSDK,
- OpenCorporatesSDK, ScrapingBeeSDK, searchSDK, SerpSDK, TomTomSDK
+SDK in use:
+```sql
+   ('foursquareSDK',         'fixed',   20000, NULL),               -- credit-based (manual reset)
+    ('googleCustomSearchSDK', 'monthly', 10000, INTERVAL '30 days'),
+    ('hunterSDK',             'monthly', 25,    INTERVAL '30 days'),
+    ('searchSDK',             'monthly', 100,   INTERVAL '30 days'),
+    ('serpSDK',               'monthly', 100,   INTERVAL '30 days'),
+    ('tomtomSDK',             'daily',   2500,  INTERVAL '1 day'),
+    ('rapidAPI',              'monthly', 500000, INTERVAL '30 days')
+```
 DO NOT USE list:
  1. BingSearchSDK  because "Product to be retired Bing Search and Bing Custom Search APIs will be retired on 11th August 2025"
  2. ClearbitSDK because ❗API keys are available for Clearbit accounts created in 2023 and earlier. If you signed up in 2024,
@@ -219,8 +227,13 @@ DO NOT USE list:
  6. PuppeteerGoogleMapsSDK because it's Runtime.OutOfMemory and max size is 50MB (86MB)
  6. OutscraperSDK because it required to link card and also it will charge for outside free limit but I want to disable any charges
  7. ParseHub - outdated shi* with empty UI https://i.imgur.com/kKbRqZ6.png and also I need to download some... - too complicated
-
+ 
+Need check (still don't use - it's just waste of time): 
+ 8. duckduckGoSDK - it's just doesn't work - tweacked 3 times with AI - still not working
+ 9. apifyContactInfoSDK (limit 500/m) because error - URLs array is required - https://i.imgur.com/wouc617.png
+ 10. scrapingBeeSDK because (limit 200/m) - ScrapingBee API error: 400 - https://i.imgur.com/wouc617.pn
 [INCLUDE 1 EXAMPLE OF SDK HERE]
+ 11. openCorporatesSDK - because - OpenCorporates search failed: OpenCorporates API error: [object Object] - https://i.imgur.com/U32MsPM.png
 
 Now send me concise files - each file represents SDK that allows to scrape leads by "keyword" and "location" and "limit"
 limit it's a number that limits usage to stay within free tier - if input is outside of free tier per then return error as string
@@ -228,27 +241,59 @@ limit it's a number that limits usage to stay within free tier - if input is out
 
 
 
-
-
-
-
+docs on how to create SDK:
+1. copy paste API key in lambda + update env.d.ts + initializeSDK
+2. add it in docs "SDK in use" and in createSDKFreetierTable (on outreach tool)
+3. add it in DB e.g
+```sql
+  INSERT INTO public.sdk_freetier (sdk_name, limit_type, limit_value, period_duration)
+  VALUES ('scrapingBeeSDK', 'monthly', 200, INTERVAL '30 days')
+  ON CONFLICT (sdk_name) DO NOTHING;
+``` 
+4. create a file e.g RapidSDK.ts
 
 Recent logs:
 ```
-🔍 duckduckGoSDK: fetching 6 leads in Germany North-North...
+⏱️ Progress: 5 leads found in 1m 00s
+🏙️ Processing 1 cities: Hamburg
+🎯 Target: 17 leads per city (17 total)
+
+🔍 ATTEMPT 1 - City: Hamburg --------------------
+SDK Status: ✅ Available: openCorporatesSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, tomtomSDK, duckduckGoSDK, apifyContactInfoSDK, scrapingBeeSDK | ❌ Unavailable: searchSDK (106/100), serpSDK (105/100)
+🎯 Need 17 more leads (0/17)
+🏙️ Scraping "it company" in Hamburg
+🚀 Using 8 SDKs (3+2+2+2(16 max)+2+2+2+2=17): duckduckGoSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, openCorporatesSDK, tomtomSDK, apifyContactInfoSDK, scrapingBeeSDK
+🔍 duckduckGoSDK: fetching 3 leads in Hamburg...
 ✅ duckduckGoSDK: got 0 leads
-🔍 foursquareSDK: fetching 1 leads in Germany North-North...
-✅ foursquareSDK: got 1 leads
-🔍 googleCustomSearchSDK: fetching 1 leads in Germany North-North...
+🔍 foursquareSDK: fetching 2 leads in Hamburg...
+✅ foursquareSDK: got 2 leads
+🔍 googleCustomSearchSDK: fetching 2 leads in Hamburg...
 ✅ googleCustomSearchSDK: got 1 leads
-🔍 hunterSDK: fetching 1 leads in Germany North-North...
+🔍 hunterSDK: fetching 2 leads in Hamburg...
 ✅ hunterSDK: got 0 leads
-🔍 openCorporatesSDK: fetching 1 leads in Germany North-North...
+🔍 openCorporatesSDK: fetching 2 leads in Hamburg...
 ❌ openCorporatesSDK error: OpenCorporates search failed: OpenCorporates API error: [object Object]
-🔍 tomtomSDK: fetching 1 leads in Germany North-North...
-✅ tomtomSDK: got 1 leads
-🔍 apifyContactInfoSDK: fetching 1 leads in Germany North-North...
+🔍 tomtomSDK: fetching 2 leads in Hamburg...
+✅ tomtomSDK: got 2 leads
+🔍 apifyContactInfoSDK: fetching 2 leads in Hamburg...
 ❌ apifyContactInfoSDK error: URLs array is required
-🔍 scrapingBeeSDK: fetching 1 leads in Germany North-North...
+🔍 scrapingBeeSDK: fetching 2 leads in Hamburg...
 ❌ scrapingBeeSDK error: Error: ScrapingBee API error: 400
+
+🔍 ATTEMPT 2 - City: Hamburg --------------------
+SDK Status: ✅ Available: openCorporatesSDK, duckduckGoSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, tomtomSDK, apifyContactInfoSDK, scrapingBeeSDK | ❌ Unavailable: searchSDK (106/100), serpSDK (105/100)
+🎯 Need 12 more leads (5/17)
+🏙️ Scraping "it company" in Hamburg
+🚀 Using 8 SDKs (5+1+1+1(16 max)+1+1+1+1=12): duckduckGoSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, openCorporatesSDK, tomtomSDK, apifyContactInfoSDK, scrapingBeeSDK
+🔍 duckduckGoSDK: fetching 5 leads in Hamburg...
+✅ duckduckGoSDK: got 0 leads
+🔍 foursquareSDK: fetching 1 leads in Hamburg...
+✅ foursquareSDK: got 0 leads
+🔍 googleCustomSearchSDK: fetching 1 leads in Hamburg...
+✅ googleCustomSearchSDK: got 0 leads
+🔍 hunterSDK: fetching 1 leads in Hamburg...
+✅ hunterSDK: got 0 leads
+🔍 openCorporatesSDK: fetching 1 leads in Hamburg...
+❌ openCorporatesSDK error: OpenCorporates search failed: OpenCorporates API error: [object Object]
+🔍 tomtomSDK: fetching 1 leads in Hamburg...
 ```

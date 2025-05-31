@@ -22,8 +22,9 @@ declare global {
       SERP_API_KEY: string
       SEARCH_API_KEY: string
       TOM_TOM_API_KEY: string
-      APIFY_API_KEY: string
-      SCRAPING_BEE_API_KEY: string
+      RAPID_API_KEY:string
+      OXYLABS_USERNAME:string
+      OXYLABS_PASSWORD:string
     }
   }
 }

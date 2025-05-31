@@ -3,179 +3,420 @@ import { Lead } from "../interfaces/interfaces"
 import { scrapeContactsFromWebsite } from "../utils/scrapeContactsFromWebsite"
 
 /**
- * Foursquare Places API SDK
+ * Foursquare Places API SDK - Enhanced for High-Volume City Processing
  * FREE: 1,000 API calls/day (30k/month)
- * Best for: Restaurants, retail, entertainment venues
- * Provides: Name, address, phone, website, categories
- * Enhanced: MUST return email AND phone for each lead
- * If error returns string wtih error message
- *
- * CRITICAL REQUIREMENT: Every lead MUST have at least email OR phone
- * If API doesn't provide contact info, automatically scrapes from:
- * - Business website (if available)
- * - Google search using business name + location
- * - Business directory lookups
- *
- * @returns Promise<Lead[]> - All leads guaranteed to have email OR phone
- * @example
- * const sdk = new FoursquareSDK("FS_API_KEY")
- * const leads = await sdk.searchBusinesses(
- *   "coffee shop",
- *   "24783, Osterrönfeld, Germany",
- *   20
- * )
+ * Optimized for: Processing 100+ cities efficiently with smart fallbacks
+ * Enhanced: Guaranteed email OR phone for each lead with multiple contact sources
  */
 export class FoursquareSDK {
   private apiKey: string
   private baseUrl = "https://api.foursquare.com/v3/places"
+  private requestCount = 0
+  private rateLimitDelay = 500 // 0.5 seconds between requests
 
   constructor(apiKey: string) {
     this.apiKey = apiKey
   }
 
-  public async searchBusinesses(query: string, location: string, limit: number = 50): Promise<Lead[]> {
-    if (!query.trim() || !location.trim()) throw new Error("Query and location are required")
-    if (!this.apiKey) throw new Error("API key is required")
+  public async searchBusinesses(query: string, location: string, limit: number = 20): Promise<Lead[] | string> {
+    if (!query.trim() || !location.trim()) return "Query and location are required"
+    if (!this.apiKey) return "API key is required"
+    if (limit <= 0) return []
 
-    const maxPerRequest = 50
-    const requestsNeeded = Math.ceil(Math.max(limit, 1) / maxPerRequest)
-    const allLeads: Lead[] = []
+    try {
+      // 1. Rate limiting
+      await this.respectRateLimit()
 
-    for (let i = 0; i < requestsNeeded; i++) {
-      const currentLimit = Math.min(maxPerRequest, limit - allLeads.length)
-      const offset = i * maxPerRequest
+      // 2. Try multiple search strategies
+      const searchStrategies = [
+        () => this.searchByTextAndLocation(query, location, limit),
+        () => this.searchByGeocodedLocation(query, location, limit),
+        () => this.searchByBroaderQuery(query, location, limit)
+      ]
 
-      try {
-        // 🔍 Attempt text-based search
-        let url = `${this.baseUrl}/search?` + new URLSearchParams({
-          query: query.trim(),
-          near: location.trim(),
-          limit: currentLimit.toString(),
-          offset: offset.toString(),
-          fields: "name,location,tel,website,categories,rating,hours"
-        }).toString()
+      let allLeads: Lead[] = []
+      let lastError = ""
 
-        let response = await fetch(url, { headers: { Authorization: this.apiKey, Accept: "application/json" } })
-        let data = await response.json().catch(() => ({}))
-
-        // 🌐 Fallback: geocode location if no results
-        if ((!data.results || data.results.length === 0) && location.trim()) {
-          const geo = await this.geocodeLocation(location.trim())
-          if (geo) {
-            url = `${this.baseUrl}/search?` + new URLSearchParams({
-              query: query.trim(),
-              ll: `${geo.lat},${geo.lon}`,
-              limit: currentLimit.toString(),
-              offset: offset.toString(),
-              fields: "name,location,tel,website,categories,rating,hours"
-            }).toString()
-            response = await fetch(url, { headers: { Authorization: this.apiKey, Accept: "application/json" } })
-            data = await response.json().catch(() => ({}))
+      for (const strategy of searchStrategies) {
+        try {
+          const leads = await strategy()
+          if (Array.isArray(leads) && leads.length > 0) {
+            allLeads = leads
+            break
           }
+        } catch (error) {
+          lastError = (error as Error).message
+          continue
         }
-
-        if (!response.ok) {
-          const err = (data as any).message || response.statusText
-          throw new Error(`Foursquare API error (${response.status}): ${err}`)
-        }
-
-        const leads = await Promise.allSettled(
-          (data.results as any[]).map(async place => {
-            // 🔧 Build base lead
-            const company = place.name || "Unknown Business"
-            const website = place.website || ""
-            const address = this.formatAddress(place.location)
-            let phone = place.tel || ""
-            let email = ""
-
-            // 🕸️ Scrape website for email
-            email = website ? (await scrapeContactsFromWebsite(website)).email : ""
-            phone = website ? (await scrapeContactsFromWebsite(website)).phone : ""
-            // 🌍 Scrape internet if no contact
-            if (!email && !phone) {
-              const e = await this.scrapeContactFromInternet(company, address)
-              email = email || e.email
-              phone = phone || e.phone
-            }
-            // 📞 or 📧 try other method
-            if (email && !phone) phone = await this.scrapePhoneFromInternet(company, address)
-            if (phone && !email) email = await this.scrapeEmailFromInternet(company, address)
-
-            return { company, address, phone, email, website }
-          })
-        )
-
-        // ✅ Filter valid leads
-        allLeads.push(
-          ...leads
-            .filter((r): r is PromiseFulfilledResult<Lead> => r.status === "fulfilled")
-            .map(r => r.value)
-            .filter(l => (l.email.trim() || l.phone.trim()) && l.company.trim())
-        )
-
-        // 🛑 Stop if results < batch size
-        if ((data.results as any[]).length < maxPerRequest) break
-        // ⏱️ rate limit
-        await new Promise(res => setTimeout(res, 200))
-      } catch {
-        continue
       }
-    }
 
-    return allLeads.slice(0, limit)
+      // 3. If no leads found, try category-based search
+      if (allLeads.length === 0) {
+        const categoryLeads = await this.searchByCategory(query, location, limit)
+        if (Array.isArray(categoryLeads)) {
+          allLeads = categoryLeads
+        }
+      }
+
+      // 4. Enhance leads with contact information
+      const enhancedLeads = await this.enhanceLeadsWithContacts(allLeads, location)
+
+      // 5. Filter leads that have at least email OR phone
+      const validLeads = enhancedLeads.filter(lead => 
+        (lead.email.trim() || lead.phone.trim()) && lead.company.trim()
+      )
+
+      return validLeads.slice(0, limit)
+
+    } catch (error) {
+      const errorMsg = (error as Error).message
+      if (errorMsg.includes('429')) {
+        return "Rate limit exceeded - please try again later"
+      }
+      if (errorMsg.includes('401') || errorMsg.includes('403')) {
+        return "Invalid API key or insufficient permissions"
+      }
+      return `Foursquare search failed: ${errorMsg}`
+    }
   }
 
   /**
-   * Convert a free-form location string into lat/lng via OSM Nominatim
-   * @param location - e.g. "24783, Osterrönfeld, Germany"
-   * @returns { lat: string, lon: string } or null
+   * Standard text + location search
    */
-  private async geocodeLocation(location: string): Promise<{ lat: string; lon: string } | null> {
-    const url = "https://nominatim.openstreetmap.org/search?" + new URLSearchParams({
-      q: location,
-      format: "json",
-      limit: "1"
+  private async searchByTextAndLocation(query: string, location: string, limit: number): Promise<Lead[]> {
+    const url = `${this.baseUrl}/search?` + new URLSearchParams({
+      query: query.trim(),
+      near: location.trim(),
+      limit: Math.min(limit, 50).toString(),
+      fields: "name,location,tel,website,categories,rating,hours,email"
     }).toString()
-    const res = await fetch(url, { headers: { "User-Agent": "MyApp/1.0" } })
-    if (!res.ok) return null
-    const [first] = (await res.json()) as any[]
-    return first ? { lat: first.lat, lon: first.lon } : null
+
+    return await this.fetchAndProcessResults(url)
   }
 
+  /**
+   * Geocoded location search (more accurate for specific cities)
+   */
+  private async searchByGeocodedLocation(query: string, location: string, limit: number): Promise<Lead[]> {
+    const geo = await this.geocodeLocation(location)
+    if (!geo) return []
+
+    const url = `${this.baseUrl}/search?` + new URLSearchParams({
+      query: query.trim(),
+      ll: `${geo.lat},${geo.lon}`,
+      radius: "10000", // 10km radius
+      limit: Math.min(limit, 50).toString(),
+      fields: "name,location,tel,website,categories,rating,hours,email"
+    }).toString()
+
+    return await this.fetchAndProcessResults(url)
+  }
+
+  /**
+   * Broader query search (remove specific terms that might be too narrow)
+   */
+  private async searchByBroaderQuery(query: string, location: string, limit: number): Promise<Lead[]> {
+    // Extract main business type (e.g., "roofing contractor" -> "roofing")
+    const broaderQuery = query.split(' ')[0]
+    
+    const url = `${this.baseUrl}/search?` + new URLSearchParams({
+      query: broaderQuery,
+      near: location.trim(),
+      limit: Math.min(limit, 50).toString(),
+      fields: "name,location,tel,website,categories,rating,hours,email"
+    }).toString()
+
+    return await this.fetchAndProcessResults(url)
+  }
+
+  /**
+   * Category-based search using Foursquare categories
+   */
+  private async searchByCategory(query: string, location: string, limit: number): Promise<Lead[]> {
+    // Map common business types to Foursquare categories
+    const categoryMap: Record<string, string> = {
+      'restaurant': '13065',
+      'food': '13065',
+      'retail': '17000',
+      'shop': '17000',
+      'service': '18000',
+      'professional': '18000',
+      'roofing': '18000',
+      'contractor': '18000',
+      'repair': '18000',
+      'medical': '15000',
+      'health': '15000',
+      'fitness': '18021',
+      'automotive': '18005'
+    }
+
+    const category = Object.keys(categoryMap).find(key => 
+      query.toLowerCase().includes(key)
+    )
+
+    if (!category) return []
+
+    const url = `${this.baseUrl}/search?` + new URLSearchParams({
+      categories: categoryMap[category],
+      near: location.trim(),
+      limit: Math.min(limit, 50).toString(),
+      fields: "name,location,tel,website,categories,rating,hours,email"
+    }).toString()
+
+    return await this.fetchAndProcessResults(url)
+  }
+
+  /**
+   * Fetch and process results from Foursquare API
+   */
+  private async fetchAndProcessResults(url: string): Promise<Lead[]> {
+    await this.respectRateLimit()
+    
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': this.apiKey,
+        'Accept': 'application/json'
+      }
+    })
+
+    if (!response.ok) {
+      throw new Error(`Foursquare API error (${response.status}): ${response.statusText}`)
+    }
+
+    const data = await response.json() as any
+    
+    if (!data.results || !Array.isArray(data.results)) {
+      return []
+    }
+
+    // Process each place into a Lead
+    const leads: Lead[] = data.results.map((place: any) => ({
+      company: place.name || "Unknown Business",
+      address: this.formatAddress(place.location),
+      phone: this.cleanPhone(place.tel || ""),
+      email: place.email || "",
+      website: place.website || ""
+    }))
+
+    return leads
+  }
+
+  /**
+   * Enhance leads with additional contact information
+   */
+  private async enhanceLeadsWithContacts(leads: Lead[], location: string): Promise<Lead[]> {
+    const enhancedLeads: Lead[] = []
+
+    for (const lead of leads) {
+      const enhanced = { ...lead }
+
+      try {
+        // 1. Scrape website for contacts if available
+        if (enhanced.website && (!enhanced.email || !enhanced.phone)) {
+          const webContacts = await this.scrapeWebsiteContacts(enhanced.website)
+          enhanced.email = enhanced.email || webContacts.email
+          enhanced.phone = enhanced.phone || webContacts.phone
+        }
+
+        // 2. Search internet for contacts if still missing
+        if (!enhanced.email || !enhanced.phone) {
+          const internetContacts = await this.searchInternetForContacts(
+            enhanced.company, 
+            location,
+            enhanced.address
+          )
+          enhanced.email = enhanced.email || internetContacts.email
+          enhanced.phone = enhanced.phone || internetContacts.phone
+        }
+
+        // 3. Try alternative search if still no contacts
+        if (!enhanced.email && !enhanced.phone) {
+          const altContacts = await this.alternativeContactSearch(enhanced.company, location)
+          enhanced.email = enhanced.email || altContacts.email
+          enhanced.phone = enhanced.phone || altContacts.phone
+        }
+
+      } catch (error) {
+        // Continue with original lead if enhancement fails
+      }
+
+      enhancedLeads.push(enhanced)
+      
+      // Small delay between enhancements to avoid overwhelming external services
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+
+    return enhancedLeads
+  }
+
+  /**
+   * Scrape website for contact information
+   */
+  private async scrapeWebsiteContacts(website: string): Promise<{ email: string; phone: string }> {
+    try {
+      const contacts = await scrapeContactsFromWebsite(website)
+      return {
+        email: contacts.email || "",
+        phone: this.cleanPhone(contacts.phone || "")
+      }
+    } catch {
+      return { email: "", phone: "" }
+    }
+  }
+
+  /**
+   * Search internet for business contacts
+   */
+  private async searchInternetForContacts(
+    businessName: string, 
+    location: string, 
+    address?: string
+  ): Promise<{ email: string; phone: string }> {
+    try {
+      const searchQuery = `"${businessName}" ${location} ${address || ""} contact email phone`
+      const searchUrl = `https://duckduckgo.com/?q=${encodeURIComponent(searchQuery)}&format=json&no_html=1`
+      
+      const response = await fetch(searchUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LeadScraper/1.0)' }
+      })
+      
+      if (!response.ok) return { email: "", phone: "" }
+      
+      const text = await response.text()
+      
+      // Extract email and phone from search results
+      const emailMatch = text.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/)
+      const phoneMatch = text.match(/\b\+?[\d\s\-\(\)\.]{10,}\b/)
+      
+      return {
+        email: emailMatch ? emailMatch[0] : "",
+        phone: phoneMatch ? this.cleanPhone(phoneMatch[0]) : ""
+      }
+    } catch {
+      return { email: "", phone: "" }
+    }
+  }
+
+  /**
+   * Alternative contact search using business directories
+   */
+  private async alternativeContactSearch(
+    businessName: string, 
+    location: string
+  ): Promise<{ email: string; phone: string }> {
+    try {
+      // Search in common business directories
+      const directories = [
+        `site:yelp.com "${businessName}" ${location}`,
+        `site:yellowpages.com "${businessName}" ${location}`,
+        `site:google.com/maps "${businessName}" ${location}`
+      ]
+
+      for (const query of directories) {
+        try {
+          const response = await fetch(`https://duckduckgo.com/?q=${encodeURIComponent(query)}&format=json`, {
+            headers: { 'User-Agent': 'Mozilla/5.0' }
+          })
+          
+          if (response.ok) {
+            const text = await response.text()
+            const emailMatch = text.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/)
+            const phoneMatch = text.match(/\b\+?[\d\s\-\(\)\.]{10,}\b/)
+            
+            if (emailMatch || phoneMatch) {
+              return {
+                email: emailMatch ? emailMatch[0] : "",
+                phone: phoneMatch ? this.cleanPhone(phoneMatch[0]) : ""
+              }
+            }
+          }
+        } catch {
+          continue
+        }
+        
+        // Small delay between directory searches
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+
+      return { email: "", phone: "" }
+    } catch {
+      return { email: "", phone: "" }
+    }
+  }
+
+  /**
+   * Convert location string to coordinates using OpenStreetMap
+   */
+  private async geocodeLocation(location: string): Promise<{ lat: string; lon: string } | null> {
+    try {
+      const url = "https://nominatim.openstreetmap.org/search?" + new URLSearchParams({
+        q: location,
+        format: "json",
+        limit: "1"
+      }).toString()
+
+      const response = await fetch(url, {
+        headers: { "User-Agent": "LeadScraper/1.0" }
+      })
+
+      if (!response.ok) return null
+
+      const results = await response.json() as any[]
+      const first = results[0]
+      
+      return first ? { lat: first.lat, lon: first.lon } : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Format address from Foursquare location object
+   */
   private formatAddress(location: any): string {
+    if (!location) return ""
+    
     const parts = [
       location.address,
       location.locality,
       location.region,
       location.postcode,
       location.country
-    ].filter((p: any) => typeof p === "string" && p.trim()).map((p: string) => p.trim())
+    ].filter((part: any) => typeof part === "string" && part.trim())
+     .map((part: string) => part.trim())
+
     return parts.join(", ")
   }
 
-  private async scrapeContactFromInternet(b: string, a: string): Promise<{ email: string; phone: string }> {
-    try {
-      const q = `"${b}" "${a}" contact email phone`
-      const r = await fetch("https://www.google.com/search?q=" + encodeURIComponent(q), {
-        headers: { "User-Agent": "Mozilla/5.0" }
-      })
-      if (!r.ok) return { email: "", phone: "" }
-      const t = (await r.text()).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ")
-      const e = t.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/)?.[0] || ""
-      const p = (t.match(/\b\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/) || [])[0] || ""
-      return { email: e, phone: p }
-    } catch {
-      return { email: "", phone: "" }
-    }
+  /**
+   * Clean and format phone numbers
+   */
+  private cleanPhone(phone: string): string {
+    if (!phone) return ""
+    
+    // Remove all non-digit characters except + at the beginning
+    const cleaned = phone.replace(/[^\d+]/g, "")
+    
+    // Ensure phone has at least 10 digits
+    const digits = cleaned.replace(/^\+/, "")
+    if (digits.length < 10) return ""
+    
+    return cleaned
   }
 
-  private async scrapePhoneFromInternet(b: string, a: string): Promise<string> {
-    const r = await this.scrapeContactFromInternet(b, a)
-    return r.phone
-  }
-
-  private async scrapeEmailFromInternet(b: string, a: string): Promise<string> {
-    const r = await this.scrapeContactFromInternet(b, a)
-    return r.email
+  /**
+   * Respect rate limits to avoid 429 errors
+   */
+  private async respectRateLimit(): Promise<void> {
+    this.requestCount++
+    
+    // Progressive delay based on request count
+    let delay = this.rateLimitDelay
+    
+    if (this.requestCount > 50) delay = 1000      // 1 second after 50 requests
+    if (this.requestCount > 100) delay = 2000     // 2 seconds after 100 requests
+    if (this.requestCount > 200) delay = 3000     // 3 seconds after 200 requests
+    
+    await new Promise(resolve => setTimeout(resolve, delay))
   }
 }

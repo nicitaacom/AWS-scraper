@@ -10,36 +10,36 @@ const scrapeContactsFromWebsite_1 = require("../utils/scrapeContactsFromWebsite"
  * Google Custom Search API SDK
  * FREE: 100 searches/day (3k/month)
  * Best for: Finding business websites and contact info
- * Provides: Website URLs, snippets, titles
- * Enhanced: MUST return email AND phone for each lead
- * If error returns string wtih error message
- *
- * CRITICAL REQUIREMENT: Every lead MUST have at least email OR phone
- * If API doesn't provide contact info, automatically scrapes from:
- * - Business website (if available)
- * - Google search using business name + location
- * - Business directory lookups
+ * Enhanced: Returns error strings instead of throwing errors
+ * Rate limited: 1 second between requests for free tier
  *
  * @param query - Business type (e.g. "nail salon")
  * @param location - City or region (e.g. "Miami")
- * @returns Promise<Lead[]> - All leads guaranteed to have email OR phone
+ * @returns Promise<Lead[] | string> - Leads array or error string
  */
 class GoogleCustomSearchSDK {
     apiKey;
     searchEngineId;
     baseUrl = "https://www.googleapis.com/customsearch/v1";
+    rateLimitDelay = 1000; // 1 second between requests
+    lastRequestTime = 0;
     constructor(apiKey, searchEngineId) {
         this.apiKey = apiKey;
         this.searchEngineId = searchEngineId;
     }
     async searchBusinesses(query, location, limit = 10) {
         try {
+            // Rate limiting
+            await this.enforceRateLimit();
             // Validate inputs
             if (!query?.trim() || !location?.trim()) {
-                throw new Error("Query and location are required");
+                return "Query and location are required";
             }
             if (!this.apiKey || !this.searchEngineId) {
-                throw new Error("API key and search engine ID are required");
+                return "API key and search engine ID are required";
+            }
+            if (limit > 100) {
+                return "Limit exceeds Google Custom Search free tier maximum of 100/day";
             }
             const searchQuery = `${query.trim()} ${location.trim()} contact phone email website`;
             const params = new URLSearchParams({
@@ -50,98 +50,88 @@ class GoogleCustomSearchSDK {
                 safe: 'active'
             });
             const response = await (0, node_fetch_1.default)(`${this.baseUrl}?${params}`, {
-                timeout: 30000
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (compatible; LeadScraper/1.0)'
+                }
             });
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
-                throw new Error(`Google API error (${response.status}): ${errorData.error?.message || response.statusText}`);
+                return `Google API error (${response.status}): ${errorData.error?.message || response.statusText}`;
             }
             const data = await response.json();
             if (!data.items || !Array.isArray(data.items)) {
-                return [];
+                return "No search results found for this query";
             }
-            const leads = await Promise.allSettled(data.items.map(async (item) => {
+            // Process leads with error handling
+            const leads = [];
+            for (const item of data.items) {
                 try {
-                    const businessName = this.extractBusinessName(item.title || "", item.snippet || "");
-                    const website = item.link || "";
-                    const address = this.extractAddress(item.snippet || "", location);
-                    let phone = "";
-                    let email = "";
-                    // First: Scrape from website if available
-                    if (website) {
-                        const [emailResult, phoneResult] = await Promise.allSettled([
-                            (await (0, scrapeContactsFromWebsite_1.scrapeContactsFromWebsite)(website)).email,
-                            (await (0, scrapeContactsFromWebsite_1.scrapeContactsFromWebsite)(website)).phone
-                        ]);
-                        email = emailResult.status === 'fulfilled' ? emailResult.value || this.extractEmail(item.snippet) : this.extractEmail(item.snippet);
-                        phone = phoneResult.status === 'fulfilled' ? phoneResult.value || this.extractPhone(item.snippet) : this.extractPhone(item.snippet);
+                    const lead = await this.processSearchItem(item, location);
+                    if (lead && this.isValidLead(lead)) {
+                        leads.push(lead);
                     }
-                    // If we still don't have email OR phone, scrape from internet
-                    if (!email && !phone) {
-                        const scrapedData = await this.scrapeContactFromInternet(businessName, address);
-                        email = email || scrapedData.email;
-                        phone = phone || scrapedData.phone;
-                    }
-                    // If we still only have one contact method, try to get the other
-                    if (email && !phone) {
-                        const phoneData = await this.scrapePhoneFromInternet(businessName, address);
-                        phone = phone || phoneData;
-                    }
-                    if (phone && !email) {
-                        const emailData = await this.scrapeEmailFromInternet(businessName, address);
-                        email = email || emailData;
-                    }
-                    return {
-                        company: businessName,
-                        address: address,
-                        phone: phone,
-                        email: email,
-                        website: website
-                    };
                 }
                 catch (error) {
-                    // Even on error, try to get basic contact info
-                    const businessName = this.extractBusinessName(item.title || "", item.snippet || "");
-                    const address = this.extractAddress(item.snippet || "", location);
-                    try {
-                        const emergencyData = await this.scrapeContactFromInternet(businessName, address);
-                        return {
-                            company: businessName,
-                            address: address,
-                            phone: emergencyData.phone,
-                            email: emergencyData.email,
-                            website: item.link || ""
-                        };
-                    }
-                    catch {
-                        return {
-                            company: businessName,
-                            address: address,
-                            phone: "",
-                            email: "",
-                            website: item.link || ""
-                        };
-                    }
+                    // Continue processing other items on individual errors
+                    console.warn(`Failed to process search item: ${error instanceof Error ? error.message : String(error)}`);
                 }
-            }));
-            // Rate limiting for free tier
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            // Filter results and ensure each lead has email OR phone
-            const validLeads = leads
-                .filter((result) => result.status === 'fulfilled')
-                .map(result => result.value)
-                .filter(lead => {
-                const hasValidCompany = lead.company && lead.company.trim().length > 0;
-                const hasContact = (lead.email && lead.email.trim().length > 0) ||
-                    (lead.phone && lead.phone.trim().length > 0);
-                return hasValidCompany && hasContact;
-            });
-            return validLeads;
+            }
+            return leads.length > 0 ? leads : "No valid leads found with contact information";
         }
         catch (error) {
-            console.error('Google Custom Search error:', error);
-            throw new Error(`Google Custom Search failed: ${error instanceof Error ? error.message : String(error)}`);
+            return `Google Custom Search failed: ${error instanceof Error ? error.message : String(error)}`;
         }
+    }
+    async enforceRateLimit() {
+        const now = Date.now();
+        const timeSinceLastRequest = now - this.lastRequestTime;
+        if (timeSinceLastRequest < this.rateLimitDelay) {
+            await new Promise(resolve => setTimeout(resolve, this.rateLimitDelay - timeSinceLastRequest));
+        }
+        this.lastRequestTime = Date.now();
+    }
+    async processSearchItem(item, location) {
+        try {
+            const businessName = this.extractBusinessName(item.title || "", item.snippet || "");
+            const website = item.link || "";
+            const address = this.extractAddress(item.snippet || "", location);
+            let phone = this.extractPhone(item.snippet || "");
+            let email = this.extractEmail(item.snippet || "");
+            // Enhanced contact scraping if website available
+            if (website && (!email || !phone)) {
+                try {
+                    const contacts = await (0, scrapeContactsFromWebsite_1.scrapeContactsFromWebsite)(website);
+                    email = email || contacts.email || "";
+                    phone = phone || contacts.phone || "";
+                }
+                catch (error) {
+                    // Continue with extracted data if scraping fails
+                }
+            }
+            // Additional internet scraping if still missing contacts
+            if (!email && !phone) {
+                const internetData = await this.scrapeContactFromInternet(businessName, address);
+                email = email || internetData.email;
+                phone = phone || internetData.phone;
+            }
+            return {
+                company: businessName,
+                address: address,
+                phone: phone,
+                email: email,
+                website: website
+            };
+        }
+        catch (error) {
+            return null;
+        }
+    }
+    isValidLead(lead) {
+        const hasValidCompany = Boolean(lead.company && lead.company.trim().length > 0);
+        const hasValidEmail = Boolean(lead.email && lead.email.trim().length > 0);
+        const hasValidPhone = Boolean(lead.phone && lead.phone.trim().length > 0);
+        const hasContact = hasValidEmail || hasValidPhone;
+        return hasValidCompany && hasContact;
     }
     extractEmail(text) {
         const emailMatch = text.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/);
@@ -167,8 +157,7 @@ class GoogleCustomSearchSDK {
             const response = await (0, node_fetch_1.default)(googleSearchUrl, {
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                },
-                timeout: 15000
+                }
             });
             if (!response.ok)
                 return { email: "", phone: "" };
@@ -178,10 +167,8 @@ class GoogleCustomSearchSDK {
                 .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
                 .replace(/<[^>]*>/g, ' ')
                 .replace(/\s+/g, ' ');
-            // Extract email
             const emailMatch = cleanText.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/);
             const email = emailMatch ? emailMatch[0] : "";
-            // Extract phone
             const phonePatterns = [
                 /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g,
                 /\b\(\d{3}\)\s?\d{3}[-.]?\d{4}\b/g,
@@ -199,24 +186,6 @@ class GoogleCustomSearchSDK {
         }
         catch (error) {
             return { email: "", phone: "" };
-        }
-    }
-    async scrapePhoneFromInternet(businessName, address) {
-        try {
-            const result = await this.scrapeContactFromInternet(businessName, address);
-            return result.phone;
-        }
-        catch (error) {
-            return "";
-        }
-    }
-    async scrapeEmailFromInternet(businessName, address) {
-        try {
-            const result = await this.scrapeContactFromInternet(businessName, address);
-            return result.email;
-        }
-        catch (error) {
-            return "";
         }
     }
     extractBusinessName(title, snippet) {

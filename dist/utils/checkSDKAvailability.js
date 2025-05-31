@@ -30,7 +30,7 @@ const checkSDKAvailability = async (supabase) => {
     });
     const status = available.length === 0
         ? `❌ All SDKs exhausted: ${unavailable.join(', ')}`
-        : `✅ Available: ${available.join(', ')}${unavailable.length ? ` | ❌ Unavailable: ${unavailable.join(', ')}` : ''}`;
+        : `SDK Status:\n✅ Available: ${available.join(', ')}${unavailable.length ? `\n❌ Unavailable: ${unavailable.join(', ')}` : ''}`;
     return { available, unavailable, status, sdkLimits };
 };
 exports.checkSDKAvailability = checkSDKAvailability;

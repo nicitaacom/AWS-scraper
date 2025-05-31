@@ -1,0 +1,105 @@
+import { Lead } from "../../interfaces/interfaces"
+
+export class ScrapingBeeSDK {
+  private apiKey: string
+  private endpoint = "https://app.scrapingbee.com/api/v1"
+
+  constructor(apiKey: string) {
+    if (!apiKey.trim()) throw new Error("ScrapingBee API key is required")
+    this.apiKey = apiKey
+  }
+
+  public async searchBusinesses(query: string, location: string, limit = 10): Promise<Lead[] | string> {
+    if (limit > 50) return "Recommended limit is 50 for performance";
+  
+    try {
+      const searchQuery = `${query} business`; // e.g., "leads business"
+      const geo = location; // e.g., "Hamburg, Germany"
+  
+      const params = new URLSearchParams({
+        api_key: this.apiKey,
+        search: searchQuery,
+        geo: geo
+        // Optional: Add 'country' or 'language' if needed
+      });
+  
+      const response = await fetch(`${this.endpoint}/store/google?${params.toString()}`);
+  
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`ScrapingBee API error: ${response.status} - ${errorBody}`);
+      }
+  
+      const data = await response.json();
+      return this.parseGoogleSearchResults(data, limit);
+    } catch (error) {
+      console.error("ScrapingBee search error:", error);
+      return `Error: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    }
+  }
+  private parseGoogleResults(html: string, limit: number): Lead[] {
+    const leads: Lead[] = [];
+    
+    try {
+      const businessBlocks = html.match(/<div[^>]*data-ved[^>]*>[\s\S]*?<\/div>/g) || [];
+      
+      for (let i = 0; i < Math.min(businessBlocks.length, limit); i++) {
+        const block = businessBlocks[i];
+        
+        const companyMatch = block.match(/<h3[^>]*>(.*?)<\/h3>/) || 
+                            block.match(/<span[^>]*role="heading"[^>]*>(.*?)<\/span>/);
+        const company = companyMatch ? companyMatch[1].replace(/<[^>]*>/g, '').trim() : '';
+        
+        const phoneMatch = block.match(/(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/) ||
+                          block.match(/(\+\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/);
+        const phone = phoneMatch ? phoneMatch[1].trim() : '';
+        
+        const websiteMatch = block.match(/https?:\/\/[^\s"<>]+/) ||
+                            block.match(/www\.[^\s"<>]+/);
+        let website = websiteMatch ? websiteMatch[0] : '';
+        if (website && !website.startsWith('http')) {
+          website = 'https://' + website;
+        }
+        
+        const addressMatch = block.match(/\d+\s+[^,]+,\s*[^,]+,\s*[A-Z]{2}\s*\d{5}/) ||
+                            block.match(/[^ **Possible HTML elements detected**: block.match(/[^,]+,\s*[^,]+,\s*[A-Z]{2}/) ||
+                            block.match(/\d+\s+[^<>]+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Boulevard|Blvd)/i);
+        const address = addressMatch ? addressMatch[0].replace(/<[^>]*>/g, '').trim() : '';
+        
+        const emailMatch = block.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+        const email = emailMatch ? emailMatch[0] : '';
+        
+        if (company) {
+          leads.push({
+            company,
+            address,
+            phone,
+            email,
+            website
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error parsing Google results:', error);
+    }
+    
+    return leads;
+  }
+
+  private parseGoogleSearchResults(data: any, limit: number): Lead[] {
+    const leads: Lead[] = [];
+    if (data.local_results && data.local_results.places) {
+      const places = data.local_results.places.slice(0, limit);
+      for (const place of places) {
+        leads.push({
+          company: place.title || "Unknown Business",
+          address: place.address || "",
+          phone: place.phone || "",
+          email: "", // Note: Email isn’t typically provided by this API
+          website: place.website || ""
+        });
+      }
+    }
+    return leads;
+  }
+}

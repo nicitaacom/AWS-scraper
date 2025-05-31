@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.handler = exports.BUCKET = void 0;
+exports.handler = exports.MAX_RETRIES = exports.BUCKET = void 0;
 const client_s3_1 = require("@aws-sdk/client-s3");
 const s3_request_presigner_1 = require("@aws-sdk/s3-request-presigner");
 const node_fetch_1 = __importDefault(require("node-fetch"));
@@ -17,8 +17,8 @@ exports.BUCKET = process.env.S3_BUCKET || "scraper-files-eu-central-1";
 const MAX_RUNTIME_MS = 13 * 60 * 1000;
 const LEADS_PER_MINUTE = 80 / 3;
 const MAX_LEADS_PER_JOB = Math.floor((MAX_RUNTIME_MS / 60000) * LEADS_PER_MINUTE);
-const PROGRESS_UPDATE_INTERVAL = 10000;
-const MAX_RETRIES = 3;
+const PROGRESS_UPDATE_INTERVAL = 10000; // 10 seconds
+exports.MAX_RETRIES = 3;
 const PARALLEL_LAMBDAS = 4;
 const startProgressUpdater = (id, channelId, getCurrentCount, getCurrentLogs, startTime) => {
     const updateProgress = async () => {
@@ -40,9 +40,9 @@ const startProgressUpdater = (id, channelId, getCurrentCount, getCurrentLogs, st
 const init = (0, initializeSDK_1.initializeClients)();
 if (typeof init === "string")
     throw Error(init);
-const { lambda, s3, supabase, pusher, openai, ...allSDKs } = init; // 🔁 Extract SDKs dynamically
+const { lambda, s3, supabase, pusher, openai, ...allSDKs } = init;
 const scraper = new scraper_1.Scraper(openai, s3, pusher, supabase, lambda);
-const sdks = allSDKs; // 🧼 DRY — all other props are SDKs
+const sdks = allSDKs;
 // Helper to load existing CSV from S3 and parse leads
 const loadExistingLeads = async (id) => {
     try {
@@ -86,8 +86,9 @@ const handler = async (event) => {
         const { keyword, location, channelId, id, limit, parentId, cities, retryCount = 0, isReverse } = event;
         const isChildJob = Boolean(parentId && cities?.length);
         const processingType = isChildJob ? 'Child' : 'Parent';
-        executionLogs += `🎯 ${processingType} job: "${keyword}" in "${location}" (${limit} leads, retry ${retryCount}/${MAX_RETRIES})\n`;
+        executionLogs += `🎯 ${processingType} job: "${keyword}" in "${location}" (${limit} leads, retry ${retryCount}/${exports.MAX_RETRIES})\n`;
         console.log(`🎯 ${processingType} job started: "${keyword}" in "${location}" (${limit} leads)`);
+        // Handle unrealistic limit detection
         if (limit > 100000 && retryCount === 0) {
             executionLogs += `⚠️ Unrealistic limit detected: ${limit} leads requested\n🔄 Adjusting expectations for location capacity...\n`;
             console.log(`⚠️ Unrealistic limit detected: ${limit} leads`);
@@ -95,8 +96,8 @@ const handler = async (event) => {
             await pusher.trigger(channelId, "scraper:update", { id, message: `⚠️ Processing large request (${limit} leads) - please be patient...` });
         }
         // Check SDK availability
-        const { available, status: sdkStatus } = await (0, checkSDKAvailability_1.checkSDKAvailability)(supabase);
-        if (available.length === 0) {
+        const { available: availableSDKs, status: sdkStatus, sdkLimits, unavailable } = await (0, checkSDKAvailability_1.checkSDKAvailability)(supabase);
+        if (availableSDKs.length === 0) {
             executionLogs += `❌ All SDKs exhausted: ${sdkStatus}\n`;
             await scraper.updateDBScraper(id, { status: "error", message: executionLogs });
             await pusher.trigger(channelId, "scraper:error", { id, error: executionLogs });
@@ -107,20 +108,68 @@ const handler = async (event) => {
             executionLogs += `📊 Large request detected (${limit} > ${MAX_LEADS_PER_JOB})\n🔄 Initiating city-based parallel processing...\n`;
             console.log(`📊 Large request detected, splitting into ${PARALLEL_LAMBDAS} parallel jobs...`);
             try {
-                // Generate cities using scraper method
+                // Store initial start time in database for duration tracking
+                await scraper.updateDBScraper(id, {
+                    status: "pending",
+                    message: `🚀 Starting parallel processing at ${new Date().toISOString()}\n${executionLogs}`
+                });
+                // Generate cities using scraper method with detailed logging
+                executionLogs += `🤖 Calling OpenAI to generate cities for location: "${location}" (isReverse: ${isReverse})\n`;
+                console.log(`🤖 Calling OpenAI to generate cities for location: "${location}" (isReverse: ${isReverse})`);
+                // Update status to show OpenAI is being called
+                await scraper.updateDBScraper(id, {
+                    message: `🤖 Generating cities using AI for "${location}"...\n${executionLogs}`
+                });
+                await pusher.trigger(channelId, "scraper:update", {
+                    id,
+                    message: `🤖 Generating cities using AI for "${location}"...`
+                });
+                const openaiStart = Date.now();
                 const allCities = await scraper.generateRegionalChunks(location, isReverse);
-                if (typeof allCities === 'string')
-                    throw Error(allCities);
-                // Split cities into 4 chunks for parallel processing
+                const openaiTime = Math.round((Date.now() - openaiStart) / 1000);
+                // Log OpenAI response details
+                if (typeof allCities === 'string') {
+                    executionLogs += `❌ OpenAI error (${openaiTime}s): ${allCities}\n`;
+                    console.error(`❌ OpenAI error (${openaiTime}s): ${allCities}`);
+                    // Update database with error
+                    await scraper.updateDBScraper(id, {
+                        status: "error",
+                        message: `❌ Failed to generate cities: ${allCities}\n${executionLogs}`
+                    });
+                    await pusher.trigger(channelId, "scraper:error", {
+                        id,
+                        error: `❌ Failed to generate cities: ${allCities}`
+                    });
+                    throw new Error(allCities);
+                }
+                // Validate cities array
+                if (!Array.isArray(allCities) || allCities.length === 0) {
+                    const errorMsg = `Invalid cities response: ${Array.isArray(allCities) ? 'empty array' : typeof allCities}`;
+                    executionLogs += `❌ ${errorMsg}\n`;
+                    console.error(`❌ ${errorMsg}`, allCities);
+                    throw new Error(errorMsg);
+                }
+                executionLogs += `✅ OpenAI success (${openaiTime}s): Generated ${allCities.length} cities\n`;
+                executionLogs += `🏙️ Sample cities: ${allCities.slice(0, 5).join(', ')}${allCities.length > 5 ? ` (+${allCities.length - 5} more)` : ''}\n`;
+                console.log(`✅ OpenAI generated ${allCities.length} cities in ${openaiTime}s:`, allCities.slice(0, 5), allCities.length > 5 ? `... (+${allCities.length - 5} more)` : '');
+                // Update progress
+                await scraper.updateDBScraper(id, {
+                    message: `✅ Generated ${allCities.length} cities, creating ${PARALLEL_LAMBDAS} parallel jobs...\n${executionLogs}`
+                });
+                await pusher.trigger(channelId, "scraper:update", {
+                    id,
+                    message: `✅ Generated ${allCities.length} cities, creating parallel jobs...`
+                });
+                // Split cities into chunks for parallel processing
                 const cityChunks = chunkCities(allCities, PARALLEL_LAMBDAS);
                 const leadsPerJob = Math.ceil(limit / PARALLEL_LAMBDAS);
-                executionLogs += `🏙️ Generated ${allCities.length} cities, split into ${cityChunks.length} chunks\n`;
-                executionLogs += `📊 Leads per job: ${leadsPerJob}\n`;
-                console.log(`🏙️ Cities: ${allCities.slice(0, 5).join(', ')}${allCities.length > 5 ? `... (${allCities.length} total)` : ''}`);
+                executionLogs += `📊 Split ${allCities.length} cities into ${cityChunks.length} chunks (${leadsPerJob} leads per job)\n`;
+                console.log(`📊 City chunks created:`, cityChunks.map((chunk, i) => `Chunk ${i + 1}: ${chunk.slice(0, 3).join(', ')}${chunk.length > 3 ? `... (+${chunk.length - 3})` : ''}`));
+                // Rest of the parallel job creation logic...
                 const childJobs = cityChunks.map((cityChunk, index) => ({
                     id: (0, uuid_1.v4)(),
                     keyword,
-                    location: cityChunk.join(', '), // Use first city as primary location
+                    location: cityChunk.join(', '),
                     limit: leadsPerJob,
                     channel_id: channelId,
                     parent_id: id,
@@ -137,8 +186,7 @@ const handler = async (event) => {
                 }
                 const invocationResults = await Promise.allSettled(childJobs.map((job, index) => {
                     const jobCities = cityChunks[index];
-                    console.log(`🚀 Triggering child Lambda for chunk ${index + 1}: ${jobCities.slice(0, 3).join(', ')}${jobCities.length > 3 ? '...' : ''}`);
-                    return scraper.invokeChildLambda({
+                    const jobPayload = {
                         keyword,
                         location: job.location,
                         limit: leadsPerJob,
@@ -147,7 +195,19 @@ const handler = async (event) => {
                         parentId: id,
                         cities: jobCities,
                         isReverse
+                    };
+                    console.log(`🚀 Triggering child Lambda ${index + 1}/${cityChunks.length}:`, {
+                        jobId: job.id,
+                        cities: jobCities.slice(0, 3).join(', ') + (jobCities.length > 3 ? `... (+${jobCities.length - 3})` : ''),
+                        leadsTarget: leadsPerJob
                     });
+                    executionLogs += `🚀 Child Job ${index + 1}: ${JSON.stringify({
+                        id: job.id,
+                        cities: jobCities.slice(0, 3),
+                        totalCities: jobCities.length,
+                        leadsTarget: leadsPerJob
+                    }, null, 2)}\n`;
+                    return scraper.invokeChildLambda(jobPayload);
                 }));
                 const successful = invocationResults.filter((r) => r.status === 'fulfilled' && r.value.success).length;
                 if (successful === 0) {
@@ -169,12 +229,15 @@ const handler = async (event) => {
                         city_chunks: cityChunks.length,
                         status: "pending",
                         leads_per_job: leadsPerJob,
-                        total_expected: successful * leadsPerJob
+                        total_expected: successful * leadsPerJob,
+                        openai_cities_generated: allCities.length,
+                        openai_processing_time: openaiTime
                     })
                 };
             }
             catch (error) {
                 executionLogs += `❌ Parallel job splitting failed: ${error.message}\n`;
+                console.error(`❌ Full error details:`, error);
                 await scraper.updateDBScraper(id, { status: "error", message: executionLogs });
                 await pusher.trigger(channelId, "scraper:error", { id, error: executionLogs });
                 throw error;
@@ -198,8 +261,12 @@ const handler = async (event) => {
         try {
             // Use cities from payload for child jobs, or generate for direct processing
             const citiesToScrape = cities?.length ? cities : [location];
-            // returns Lead[]
-            const leads = await scraper.scrapeLeads(keyword, citiesToScrape, limit, existingLeads, (count) => { currentLeadsCount = count; }, (logs) => { executionLogs = logs; }, sdks);
+            // Scrape leads and accumulate all logs
+            const leads = await scraper.scrapeLeads(keyword, citiesToScrape, limit, existingLeads, (count) => { currentLeadsCount = count; }, (logs) => {
+                // Accumulate scraping logs with execution logs
+                executionLogs = executionLogs.split('🔍 Starting city-based lead scraping process...')[0] +
+                    '🔍 Starting city-based lead scraping process...\n' + logs;
+            }, sdks);
             const scrapeTime = Math.round((Date.now() - scrapeStart) / 1000);
             const newLeadsFound = leads.length - existingLeads.length;
             executionLogs += `✅ Scraping completed in ${scrapeTime}s\n📊 Results: ${leads.length}/${limit} leads (+${newLeadsFound} new, ${Math.round(leads.length / limit * 100)}%)\n`;
@@ -211,11 +278,11 @@ const handler = async (event) => {
             const processingTime = Math.round((Date.now() - start) / 1000);
             const foundRatio = leads.length / limit;
             // Retry logic for insufficient leads
-            const shouldRetry = foundRatio < 0.8 && retryCount < MAX_RETRIES && limit <= 10000 && newLeadsFound > 0;
+            const shouldRetry = foundRatio < 0.8 && retryCount < exports.MAX_RETRIES && limit <= 10000 && newLeadsFound > 0;
             if (shouldRetry) {
                 const remaining = limit - leads.length;
-                executionLogs += `🔄 Insufficient leads found (${Math.round(foundRatio * 100)}%)\n🔄 Retrying (${retryCount + 1}/${MAX_RETRIES}): ${leads.length} leads found - searching for ${remaining} more\n`;
-                console.log(`🔄 Insufficient leads, retrying ${retryCount + 1}/${MAX_RETRIES}...`);
+                executionLogs += `🔄 Insufficient leads found (${Math.round(foundRatio * 100)}%)\n🔄 Retrying (${retryCount + 1}/${exports.MAX_RETRIES}): ${leads.length} leads found - searching for ${remaining} more\n`;
+                console.log(`🔄 Insufficient leads, retrying ${retryCount + 1}/${exports.MAX_RETRIES}...`);
                 // Save current progress before retry
                 const header = "Name,Address,Phone,Email,Website";
                 const csvRows = leads.map(lead => [lead.company, lead.address, lead.phone, lead.email, lead.website].map(cell => `"${(cell || '').replace(/"/g, '""')}"`).join(","));
@@ -229,7 +296,7 @@ const handler = async (event) => {
                 }));
                 const tempDownloadUrl = await (0, s3_request_presigner_1.getSignedUrl)(s3, new client_s3_1.GetObjectCommand({ Bucket: exports.BUCKET, Key: tempFileName }), { expiresIn: 3600 });
                 await scraper.updateDBScraper(id, { downloadable_link: tempDownloadUrl, leads_count: leads.length });
-                const retryMessage = `🔄 Retrying (${retryCount + 1}/${MAX_RETRIES}): ${leads.length} leads found, searching for ${remaining} more...\n${executionLogs}`;
+                const retryMessage = `🔄 Retrying (${retryCount + 1}/${exports.MAX_RETRIES}): ${leads.length} leads found, searching for ${remaining} more...\n${executionLogs}`;
                 await scraper.updateDBScraper(id, { message: retryMessage });
                 await pusher.trigger(channelId, "scraper:update", { id, message: retryMessage });
                 return (0, exports.handler)({ ...event, retryCount: retryCount + 1 });
@@ -262,6 +329,7 @@ const handler = async (event) => {
                 message: finalMessage
             });
             console.log(`✅ Job completed: ${leads.length}/${limit} leads in ${processingTime}s`);
+            // Handle child job completion and parent updates
             if (isChildJob && parentId) {
                 console.log(`🔗 Child job completed, updating parent progress...`);
                 const { data: childJobs, error: fetchError } = await supabase.from("scraper").select("id, status, leads_count, message").eq("parent_id", parentId);
@@ -272,8 +340,18 @@ const handler = async (event) => {
                     const parentMessage = `🎯 ${completedCount}/${totalJobs} parallel jobs completed, ${totalLeads} leads collected\n📊 Progress: ${Math.round(completedCount / totalJobs * 100)}%`;
                     await scraper.updateDBScraper(parentId, { leads_count: totalLeads, message: parentMessage });
                     await pusher.trigger(channelId, "scraper:update", { id: parentId, leads_count: totalLeads, message: parentMessage });
+                    // Calculate total duration from parent job start when all child jobs complete
                     if (completedCount === totalJobs) {
                         console.log(`🔗 All parallel jobs completed, scheduling merge...`);
+                        // Get parent job creation time to calculate total duration
+                        const { data: parentJob } = await supabase.from("scraper").select("created_at").eq("id", parentId).single();
+                        const parentStartTime = parentJob ? new Date(parentJob.created_at).getTime() : start;
+                        const totalDuration = Math.round((Date.now() - parentStartTime) / 1000);
+                        // Update parent with total duration before merge
+                        await scraper.updateDBScraper(parentId, {
+                            completed_in_s: totalDuration,
+                            message: `🎯 All ${totalJobs} parallel jobs completed in ${(0, date_utils_1.formatDuration)(totalDuration)}, ${totalLeads} leads collected\n📄 Merging results...`
+                        });
                         setTimeout(() => scraper.checkAndMergeResults(parentId, channelId, exports.BUCKET), 5000);
                     }
                 }
@@ -292,7 +370,7 @@ const handler = async (event) => {
             else {
                 const statusCode = foundRatio < 0.8 ? 206 : 200;
                 const responseMessage = foundRatio < 0.8
-                    ? (isUnrealisticRequest ? "⚠️ Location may not have enough businesses of this type" : `⚠️ Not enough leads found after ${MAX_RETRIES} attempts`)
+                    ? (isUnrealisticRequest ? "⚠️ Location may not have enough businesses of this type" : `⚠️ Not enough leads found after ${exports.MAX_RETRIES} attempts`)
                     : "✅ Scraping completed successfully";
                 await pusher.trigger(channelId, "scraper:completed", {
                     id,

@@ -17,8 +17,8 @@ export const BUCKET = process.env.S3_BUCKET || "scraper-files-eu-central-1"
 const MAX_RUNTIME_MS = 13 * 60 * 1000
 const LEADS_PER_MINUTE = 80 / 3
 const MAX_LEADS_PER_JOB = Math.floor((MAX_RUNTIME_MS / 60000) * LEADS_PER_MINUTE)
-const PROGRESS_UPDATE_INTERVAL = 10000
-const MAX_RETRIES = 3
+const PROGRESS_UPDATE_INTERVAL = 10000 // 10 seconds
+export const MAX_RETRIES = 3
 const PARALLEL_LAMBDAS = 4
 
 const startProgressUpdater = (id: string, channelId: string, getCurrentCount: () => number, getCurrentLogs: () => string, startTime: number) => {
@@ -41,10 +41,9 @@ const startProgressUpdater = (id: string, channelId: string, getCurrentCount: ()
 const init = initializeClients()
 if (typeof init === "string") throw Error(init)
 
-const { lambda, s3, supabase, pusher, openai, ...allSDKs } = init // 🔁 Extract SDKs dynamically
-
+const { lambda, s3, supabase, pusher, openai, ...allSDKs } = init
 const scraper = new Scraper(openai, s3, pusher, supabase, lambda)
-const sdks = allSDKs // 🧼 DRY — all other props are SDKs
+const sdks = allSDKs
 
 // Helper to load existing CSV from S3 and parse leads
 const loadExistingLeads = async (id: string): Promise<Lead[]> => {
@@ -98,6 +97,7 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
     executionLogs += `🎯 ${processingType} job: "${keyword}" in "${location}" (${limit} leads, retry ${retryCount}/${MAX_RETRIES})\n`
     console.log(`🎯 ${processingType} job started: "${keyword}" in "${location}" (${limit} leads)`)
 
+    // Handle unrealistic limit detection
     if (limit > 100000 && retryCount === 0) {
       executionLogs += `⚠️ Unrealistic limit detected: ${limit} leads requested\n🔄 Adjusting expectations for location capacity...\n`
       console.log(`⚠️ Unrealistic limit detected: ${limit} leads`)
@@ -106,8 +106,8 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
     }
 
     // Check SDK availability
-    const { available, status: sdkStatus } = await checkSDKAvailability(supabase)
-    if (available.length === 0) {
+    const { available: availableSDKs, status: sdkStatus, sdkLimits, unavailable } = await checkSDKAvailability(supabase)
+    if (availableSDKs.length === 0) {
       executionLogs += `❌ All SDKs exhausted: ${sdkStatus}\n`
       await scraper.updateDBScraper(id, { status: "error", message: executionLogs })
       await pusher.trigger(channelId, "scraper:error", { id, error: executionLogs })
@@ -120,22 +120,88 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
       console.log(`📊 Large request detected, splitting into ${PARALLEL_LAMBDAS} parallel jobs...`)
     
       try {
-        // Generate cities using scraper method
-        const allCities = await scraper.generateRegionalChunks(location, isReverse)
-        if (typeof allCities === 'string') throw Error(allCities)
+        // Store initial start time in database for duration tracking
+        await scraper.updateDBScraper(id, { 
+          status: "pending",
+          message: `🚀 Starting parallel processing at ${new Date().toISOString()}\n${executionLogs}` 
+        })
+    
+        // Generate cities using scraper method with detailed logging
+        executionLogs += `🤖 Calling OpenAI to generate cities for location: "${location}" (isReverse: ${isReverse})\n`
+        console.log(`🤖 Calling OpenAI to generate cities for location: "${location}" (isReverse: ${isReverse})`)
         
-        // Split cities into 4 chunks for parallel processing
+        // Update status to show OpenAI is being called
+        await scraper.updateDBScraper(id, { 
+          message: `🤖 Generating cities using AI for "${location}"...\n${executionLogs}` 
+        })
+        await pusher.trigger(channelId, "scraper:update", { 
+          id, 
+          message: `🤖 Generating cities using AI for "${location}"...` 
+        })
+        
+        const openaiStart = Date.now()
+        const allCities = await scraper.generateRegionalChunks(location, isReverse)
+        const openaiTime = Math.round((Date.now() - openaiStart) / 1000)
+        
+        // Log OpenAI response details
+        if (typeof allCities === 'string') {
+          executionLogs += `❌ OpenAI error (${openaiTime}s): ${allCities}\n`
+          console.error(`❌ OpenAI error (${openaiTime}s): ${allCities}`)
+          
+          // Update database with error
+          await scraper.updateDBScraper(id, { 
+            status: "error", 
+            message: `❌ Failed to generate cities: ${allCities}\n${executionLogs}` 
+          })
+          await pusher.trigger(channelId, "scraper:error", { 
+            id, 
+            error: `❌ Failed to generate cities: ${allCities}` 
+          })
+          
+          throw new Error(allCities)
+        }
+        
+        // Validate cities array
+        if (!Array.isArray(allCities) || allCities.length === 0) {
+          const errorMsg = `Invalid cities response: ${Array.isArray(allCities) ? 'empty array' : typeof allCities}`
+          executionLogs += `❌ ${errorMsg}\n`
+          console.error(`❌ ${errorMsg}`, allCities)
+          throw new Error(errorMsg)
+        }
+        
+        executionLogs += `✅ OpenAI success (${openaiTime}s): Generated ${allCities.length} cities\n`
+        executionLogs += `🏙️ Sample cities: ${allCities.slice(0, 5).join(', ')}${allCities.length > 5 ? ` (+${allCities.length - 5} more)` : ''}\n`
+        
+        console.log(`✅ OpenAI generated ${allCities.length} cities in ${openaiTime}s:`, 
+          allCities.slice(0, 5), 
+          allCities.length > 5 ? `... (+${allCities.length - 5} more)` : ''
+        )
+        
+        // Update progress
+        await scraper.updateDBScraper(id, { 
+          message: `✅ Generated ${allCities.length} cities, creating ${PARALLEL_LAMBDAS} parallel jobs...\n${executionLogs}` 
+        })
+        await pusher.trigger(channelId, "scraper:update", { 
+          id, 
+          message: `✅ Generated ${allCities.length} cities, creating parallel jobs...` 
+        })
+        
+        // Split cities into chunks for parallel processing
         const cityChunks = chunkCities(allCities, PARALLEL_LAMBDAS)
         const leadsPerJob = Math.ceil(limit / PARALLEL_LAMBDAS)
         
-        executionLogs += `🏙️ Generated ${allCities.length} cities, split into ${cityChunks.length} chunks\n`
-        executionLogs += `📊 Leads per job: ${leadsPerJob}\n`
-        console.log(`🏙️ Cities: ${allCities.slice(0, 5).join(', ')}${allCities.length > 5 ? `... (${allCities.length} total)` : ''}`)
+        executionLogs += `📊 Split ${allCities.length} cities into ${cityChunks.length} chunks (${leadsPerJob} leads per job)\n`
+        console.log(`📊 City chunks created:`, 
+          cityChunks.map((chunk, i) => 
+            `Chunk ${i + 1}: ${chunk.slice(0, 3).join(', ')}${chunk.length > 3 ? `... (+${chunk.length - 3})` : ''}`
+          )
+        )
     
+        // Rest of the parallel job creation logic...
         const childJobs = cityChunks.map((cityChunk, index) => ({
           id: uuidv4(),
           keyword,
-          location: cityChunk.join(', '), // Use first city as primary location
+          location: cityChunk.join(', '),
           limit: leadsPerJob,
           channel_id: channelId,
           parent_id: id,
@@ -155,17 +221,31 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
         const invocationResults = await Promise.allSettled(
           childJobs.map((job, index) => {
             const jobCities = cityChunks[index]
-            console.log(`🚀 Triggering child Lambda for chunk ${index + 1}: ${jobCities.slice(0, 3).join(', ')}${jobCities.length > 3 ? '...' : ''}`)
-            return scraper.invokeChildLambda({ 
+            const jobPayload = { 
               keyword, 
               location: job.location, 
               limit: leadsPerJob, 
               channelId, 
               id: job.id, 
               parentId: id, 
-              cities: jobCities,
+              cities: jobCities, 
               isReverse 
+            }
+            
+            console.log(`🚀 Triggering child Lambda ${index + 1}/${cityChunks.length}:`, { 
+              jobId: job.id, 
+              cities: jobCities.slice(0, 3).join(', ') + (jobCities.length > 3 ? `... (+${jobCities.length - 3})` : ''),
+              leadsTarget: leadsPerJob 
             })
+            
+            executionLogs += `🚀 Child Job ${index + 1}: ${JSON.stringify({ 
+              id: job.id, 
+              cities: jobCities.slice(0, 3), 
+              totalCities: jobCities.length, 
+              leadsTarget: leadsPerJob 
+            }, null, 2)}\n`
+            
+            return scraper.invokeChildLambda(jobPayload)
           })
         )
     
@@ -192,16 +272,21 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
             city_chunks: cityChunks.length,
             status: "pending",
             leads_per_job: leadsPerJob,
-            total_expected: successful * leadsPerJob
+            total_expected: successful * leadsPerJob,
+            openai_cities_generated: allCities.length,
+            openai_processing_time: openaiTime
           })
         }
       } catch (error) {
         executionLogs += `❌ Parallel job splitting failed: ${(error as Error).message}\n`
+        console.error(`❌ Full error details:`, error)
+        
         await scraper.updateDBScraper(id, { status: "error", message: executionLogs })
         await pusher.trigger(channelId, "scraper:error", { id, error: executionLogs })
         throw error
       }
     }
+    
 
     // Load existing leads on retry
     let existingLeads: Lead[] = []
@@ -225,14 +310,18 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
       // Use cities from payload for child jobs, or generate for direct processing
       const citiesToScrape = cities?.length ? cities : [location]
       
-      // returns Lead[]
+      // Scrape leads and accumulate all logs
       const leads = await scraper.scrapeLeads(
         keyword,
         citiesToScrape,
         limit,
         existingLeads,
         (count: number) => { currentLeadsCount = count },
-        (logs: string) => { executionLogs = logs },
+        (logs: string) => { 
+          // Accumulate scraping logs with execution logs
+          executionLogs = executionLogs.split('🔍 Starting city-based lead scraping process...')[0] + 
+                         '🔍 Starting city-based lead scraping process...\n' + logs
+        },
         sdks,
       )
 
@@ -314,6 +403,7 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
 
       console.log(`✅ Job completed: ${leads.length}/${limit} leads in ${processingTime}s`)
 
+      // Handle child job completion and parent updates
       if (isChildJob && parentId) {
         console.log(`🔗 Child job completed, updating parent progress...`)
         const { data: childJobs, error: fetchError } = await supabase.from("scraper").select("id, status, leads_count, message").eq("parent_id", parentId)
@@ -328,8 +418,21 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
           await scraper.updateDBScraper(parentId, { leads_count: totalLeads, message: parentMessage })
           await pusher.trigger(channelId, "scraper:update", { id: parentId, leads_count: totalLeads, message: parentMessage })
 
+          // Calculate total duration from parent job start when all child jobs complete
           if (completedCount === totalJobs) {
             console.log(`🔗 All parallel jobs completed, scheduling merge...`)
+            
+            // Get parent job creation time to calculate total duration
+            const { data: parentJob } = await supabase.from("scraper").select("created_at").eq("id", parentId).single()
+            const parentStartTime = parentJob ? new Date(parentJob.created_at).getTime() : start
+            const totalDuration = Math.round((Date.now() - parentStartTime) / 1000)
+            
+            // Update parent with total duration before merge
+            await scraper.updateDBScraper(parentId, { 
+              completed_in_s: totalDuration,
+              message: `🎯 All ${totalJobs} parallel jobs completed in ${formatDuration(totalDuration)}, ${totalLeads} leads collected\n📄 Merging results...`
+            })
+            
             setTimeout(() => scraper.checkAndMergeResults(parentId, channelId, BUCKET), 5000)
           }
         }
