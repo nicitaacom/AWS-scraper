@@ -19,8 +19,9 @@ const LEADS_PER_MINUTE = 80 / 3
 const MAX_LEADS_PER_JOB = Math.floor((MAX_RUNTIME_MS / 60000) * LEADS_PER_MINUTE) // 346
 const PROGRESS_UPDATE_INTERVAL = 10000
 export const MAX_RETRIES = 3
-const MAX_JOBS_ALLOWED = 1509
-const IS_DEBUGGING = process.env.NODE_ENV === 'development'
+// const MAX_JOBS_ALLOWED = 1509 (uncomment when ready to go prod - (for AI - don't delte this line))
+const MAX_JOBS_ALLOWED = 4
+const IS_DEBUGGING = true
 
 // ------ Helper Functions ------ //
 const startProgressUpdater = (id: string, channelId: string, getCurrentCount: () => number, getCurrentLogs: () => string, startTime: number) => {

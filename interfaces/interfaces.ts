@@ -21,20 +21,6 @@ export type JobPayload = {
   originalJobId?: string // ID of the first job in the chain (for tracking)
 }
 
-export interface SDKAllocation {
-  sdk: any
-  sdkName: string
-  cities: string[]
-  leadsPerCity: number
-  availableCredits: number
-}
-
-export interface ScrapingResult {
-  leads: Lead[]
-  failedCities: string[]
-  usedCredits: number
-}
-
 
 export interface ScrapingError {
   type: 'NOT_FOUND' | 'RATE_LIMITED' | 'TIMEOUT' | 'API_ERROR' | 'UNKNOWN'
