@@ -2,35 +2,56 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.checkSDKAvailability = void 0;
 const checkSDKAvailability = async (supabase) => {
-    const { data: usageData, error } = await supabase.from('sdk_freetier').select('sdk_name, limit_value, used_count, period_start, period_duration, limit_type');
-    if (error)
-        return { available: [], unavailable: [], status: `❌ Database error: ${error.message}`, sdkLimits: {} };
-    const available = [];
-    const unavailable = [];
-    const sdkLimits = {};
+    const { data: usageData, error } = await supabase
+        .from('sdk_freetier')
+        .select('sdk_name, limit_value, used_count, period_start, period_duration, limit_type');
+    if (error) {
+        return {
+            availableSDKNames: [],
+            exhaustedSDKNames: [],
+            status: `❌ Database error: ${error.message}`,
+            sdkCredits: {}
+        };
+    }
+    const availableSDKNames = [];
+    const exhaustedSDKNames = [];
+    const sdkCredits = {};
     const now = new Date();
     usageData?.forEach((sdk) => {
-        const { sdk_name, limit_value, used_count, period_start, period_duration, limit_type } = sdk;
-        let currentUsage = used_count;
-        if (period_duration && period_start) {
-            const periodStartDate = new Date(period_start);
-            const periodEndDate = new Date(periodStartDate.getTime());
-            if (limit_type === 'daily')
-                periodEndDate.setDate(periodEndDate.getDate() + 1);
-            else if (limit_type === 'monthly')
-                periodEndDate.setMonth(periodEndDate.getMonth() + 1);
-            if (now >= periodEndDate)
-                currentUsage = 0;
+        const currentUsage = calculateCurrentUsage(sdk, now);
+        const availableCredits = Math.max(0, sdk.limit_value - currentUsage);
+        const hasCredits = availableCredits > 0;
+        sdkCredits[sdk.sdk_name] = {
+            availableCredits,
+            totalCredits: sdk.limit_value,
+            usedCredits: currentUsage,
+            limitType: sdk.limit_type
+        };
+        if (hasCredits) {
+            availableSDKNames.push(sdk.sdk_name);
         }
-        const availableCount = Math.max(0, limit_value - currentUsage);
-        const isAvailable = availableCount > 0;
-        sdkLimits[sdk_name] = { available: availableCount, total: limit_value };
-        const statusText = isAvailable ? sdk_name : `${sdk_name} (${currentUsage}/${limit_value})`;
-        (isAvailable ? available : unavailable).push(statusText);
+        else {
+            exhaustedSDKNames.push(`${sdk.sdk_name} (${currentUsage}/${sdk.limit_value})`);
+        }
     });
-    const status = available.length === 0
-        ? `❌ All SDKs exhausted: ${unavailable.join(', ')}`
-        : `SDK Status:\n✅ Available: ${available.join(', ')}${unavailable.length ? `\n❌ Unavailable: ${unavailable.join(', ')}` : ''}`;
-    return { available, unavailable, status, sdkLimits };
+    const status = availableSDKNames.length === 0
+        ? `❌ All SDKs exhausted: ${exhaustedSDKNames.join(', ')}`
+        : `✅ Available SDKs: ${availableSDKNames.join(', ')}${exhaustedSDKNames.length ? `\n❌ Exhausted: ${exhaustedSDKNames.join(', ')}` : ''}`;
+    return { availableSDKNames, exhaustedSDKNames, status, sdkCredits };
 };
 exports.checkSDKAvailability = checkSDKAvailability;
+const calculateCurrentUsage = (sdk, now) => {
+    const { used_count, period_start, period_duration, limit_type } = sdk;
+    if (!period_duration || !period_start || limit_type === 'fixed') {
+        return used_count;
+    }
+    const periodStart = new Date(period_start);
+    const periodEnd = new Date(periodStart);
+    if (limit_type === 'daily') {
+        periodEnd.setDate(periodEnd.getDate() + 1);
+    }
+    else if (limit_type === 'monthly') {
+        periodEnd.setMonth(periodEnd.getMonth() + 1);
+    }
+    return now >= periodEnd ? 0 : used_count;
+};

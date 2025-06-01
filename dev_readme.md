@@ -6,6 +6,8 @@ You're building a lead scraper Lambda function.
 - Uses `scraper.generateRegionalChunks` that returns string[] of cities to scrape leads those cities
 - For example limit is 200 and 100 cities and 5 available SDKs so it's 40 limit per SDK and 20 cities per SDK
   If SDK1 found 40 leads in 3 cities then exit cities loop
+- If SDK1 requested limit to find 40 leads in 20 cities but not found something in 1 city - deligate this city to other SDK
+  If other SDK not found that leads in that city as well - then skip this city
 - Jobs run **sequentially** (not in parallel) to avoid 429s, track `completed_in_s`, and respect `MAX_RUNTIME_MS`.
 - There is **no parent job** — the chain starts with Job1 and continues auto-chaining:
   - Each job scrapes up to `MAX_LEADS_PER_JOB` (~346 leads in 13 mins).

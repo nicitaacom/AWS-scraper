@@ -52,10 +52,10 @@ export declare class Scraper {
     updateDBScraper: (id: string, data: DBUpdate) => Promise<void>;
     /** Scrapes leads with retry and SDK redistribution logic */
     scrapeLeads(keyword: string, cities: string[], targetLimit: number, existingLeads: Lead[], progressCallback: (count: number) => void, logsCallback: (logs: string) => void, sdks: Record<string, any>): Promise<Lead[]>;
-    /** Assigns cities to SDKs based on availability and prior attempts */
+    /** Assigns cities to SDKs based on equal distribution of target leads */
     private createCitySDKAssignments;
     /** Processes cities for an SDK with rate limiting */
-    private processCitiesForSDK;
+    private searchBusinessesUsingSDK;
     /**
      * Merges two lead arrays and removes duplicates
      * @param existingLeads Current leads
@@ -79,7 +79,6 @@ export declare class Scraper {
      */
     calculateEstimatedCompletion: (startTime: number, currentCount: number, targetCount: number) => number;
     /** Redistributes failed cities to other SDKs */
-    /** Enhanced redistribution with failure tracking and smart SDK selection */
     private redistributeFailedCities;
     private categorizeError;
     /**

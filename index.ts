@@ -17,7 +17,8 @@ export const BUCKET = process.env.S3_BUCKET || "scraper-files-eu-central-1"
 export const MAX_RUNTIME_MS = 13 * 60 * 1000 // export it to use in Scraper because somtimes it get stuck
 const PROGRESS_UPDATE_INTERVAL = 10000
 export const MAX_RETRIES = 3
-// const MAX_JOBS_ALLOWED = 1509 (uncomment when ready to go prod - (for AI - don't delte this line))
+// I thought about 1509 but I thought that it's dangerous due to cost for lambda function usage
+// So for now limit should be low
 const MAX_JOBS_ALLOWED = 4
 const IS_DEBUGGING = true
 

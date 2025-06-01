@@ -409,83 +409,114 @@ class Scraper {
     // LOGIC TO SCRAPE ----------------------
     /** Scrapes leads with retry and SDK redistribution logic */
     async scrapeLeads(keyword, cities, targetLimit, existingLeads, progressCallback, logsCallback, sdks) {
-        // Fun job startup message
+        // ------ 1. Initialize variables and setup ------ //
+        // 1.1 [STARTUP_MESSAGE]: Log job startup
         const remaining = targetLimit - existingLeads.length;
         let logs = `🎯 job1 – ok I'm running to scrape ${targetLimit} leads for you\n`;
         if (existingLeads.length > 0) {
             logs += `📊 already got ${existingLeads.length} bangers – hunting for ${remaining} more 🔥\n`;
         }
         logsCallback(logs);
+        // 1.2 [VARIABLES]: Setup leads and tracking
         let allLeads = [...existingLeads];
         const seenCompanies = new Set(existingLeads.map(lead => `${lead.company}-${lead.address}`.toLowerCase().trim()));
         const triedSDKs = new Map(cities.map(city => [city, new Set()]));
         const permanentFailures = new Set();
         let attempt = 0;
+        // ------ 2. Main scraping loop ------ //
         while (allLeads.length < targetLimit && attempt < __1.MAX_RETRIES) {
             attempt++;
             const stillNeed = targetLimit - allLeads.length;
-            const { available, status, sdkLimits } = await (0, checkSDKAvailability_1.checkSDKAvailability)(this.supabaseAdmin);
-            const availableSDKs = Object.keys(sdks).filter(sdk => available.includes(sdk));
+            // 2.1 [SDK_CHECK]: Verify SDK availability
+            // sdkLimits: Record<string, { available: number, total: number }> 
+            const { availableSDKNames, status, exhaustedSDKNames, sdkCredits } = await (0, checkSDKAvailability_1.checkSDKAvailability)(this.supabaseAdmin);
+            const availableSDKs = Object.keys(sdks).filter(sdk => availableSDKNames.includes(sdk));
             if (!availableSDKs.length) {
                 logs += "😴 all SDKs taking a breather - wrapping up\n";
                 logsCallback(logs);
                 break;
             }
+            // 2.2 [CITY_FILTER]: Filter active cities
             const activeCities = cities.filter(city => !permanentFailures.has(city));
             if (!activeCities.length) {
                 logs += "🏁 every city is done - mission complete!\n";
                 logsCallback(logs);
                 break;
             }
-            const cityAssignments = this.createCitySDKAssignments(activeCities, availableSDKs, sdkLimits, stillNeed, triedSDKs);
+            // 2.3 [CITY_ASSIGNMENT]: Assign cities to SDKs
+            const cityAssignments = this.createCitySDKAssignments(activeCities, availableSDKs, sdkCredits, stillNeed, triedSDKs);
+            // 2.4 [PROCESS_SDKS]: Process each available SDK
             const rateLimitedCities = [];
             const timeoutCities = [];
+            const citiesToRedistribute = [];
             let totalNewLeads = 0;
             let chainMessage = "";
-            // Process each SDK assignment
-            for (const [sdkName, { cities: assignedCities, leadsPerCity }] of Object.entries(cityAssignments)) {
+            for (const sdkName of availableSDKs) {
                 if (allLeads.length >= targetLimit)
                     break;
-                const sdk = sdks[sdkName];
-                if (!sdk?.searchBusinesses)
+                const { cities: assignedCities, leadsPerCity } = cityAssignments[sdkName] || { cities: [], leadsPerCity: 0 };
+                if (!assignedCities.length)
                     continue;
-                const summary = await this.processCitiesForSDK(sdk, sdkName, keyword, assignedCities, leadsPerCity, seenCompanies, progressCallback, logsCallback, triedSDKs);
-                allLeads.push(...summary.leads);
-                totalNewLeads += summary.leads.length;
-                // Collect failed cities for redistribution
-                rateLimitedCities.push(...summary.retriableCities.filter(city => triedSDKs.get(city)?.has(sdkName) && !permanentFailures.has(city)));
-                timeoutCities.push(...summary.failedCities.filter(city => !summary.retriableCities.includes(city) && !permanentFailures.has(city)));
-                summary.permanentFailures.forEach(city => permanentFailures.add(city));
-                // Update usage tracking
-                if (summary.totalUsed > 0) {
-                    await this.updateDBSDKFreeTier({ sdkName, usedCount: summary.totalUsed, increment: true });
+                const sdk = sdks[sdkName];
+                if (!sdk?.searchBusinesses) {
+                    logs += `${this.SDK_EMOJIS[sdkName]} [${sdkName}]: !sdk?.searchBusinesses - redistributing cities\n`;
+                    citiesToRedistribute.push(...assignedCities);
+                    logsCallback(logs);
+                    continue;
                 }
-                // Check if we should chain to next job
-                if (allLeads.length < targetLimit) {
-                    const remaining = targetLimit - allLeads.length;
-                    chainMessage = `   I found ${allLeads.length} leads 🔥 – let my job2 take care of the rest of ${remaining} leads for ya 😎\n`;
+                try {
+                    const summary = await this.searchBusinessesUsingSDK(sdk, sdkName, keyword, assignedCities, leadsPerCity, seenCompanies, progressCallback, logsCallback, triedSDKs);
+                    allLeads.push(...summary.leads);
+                    totalNewLeads += summary.leads.length;
+                    // Collect failed cities for redistribution
+                    rateLimitedCities.push(...summary.retriableCities.filter(city => triedSDKs.get(city)?.has(sdkName) && !permanentFailures.has(city)));
+                    timeoutCities.push(...summary.failedCities.filter(city => !summary.retriableCities.includes(city) && !permanentFailures.has(city)));
+                    summary.permanentFailures.forEach(city => permanentFailures.add(city));
+                    // Update usage tracking
+                    if (summary.totalUsed > 0) {
+                        await this.updateDBSDKFreeTier({ sdkName, usedCount: summary.totalUsed, increment: true });
+                    }
+                    // Check if we should chain to next job
+                    if (allLeads.length < targetLimit) {
+                        const remaining = targetLimit - allLeads.length;
+                        chainMessage = `   I found ${allLeads.length} leads 🔥 – let my job2 take care of the rest of ${remaining} leads for ya 😎\n`;
+                    }
+                }
+                catch (error) {
+                    logs += `${this.SDK_EMOJIS[sdkName]} [${sdkName}]: Error processing cities: ${error.message}\n`;
+                    citiesToRedistribute.push(...assignedCities);
+                    logsCallback(logs);
                 }
             }
-            // Show chain message if applicable
+            // 2.5 [CHAIN_MESSAGE]: Log chaining if needed
             if (chainMessage) {
                 logs += chainMessage;
                 logsCallback(logs);
             }
-            // Handle redistribution
-            const retriableCities = [...new Set([...rateLimitedCities, ...timeoutCities])];
+            // 2.6 [REDISTRIBUTE]: Handle redistribution of failed or invalid SDK cities
+            const retriableCities = [...new Set([...rateLimitedCities, ...timeoutCities, ...citiesToRedistribute])];
             if (retriableCities.length && allLeads.length < targetLimit) {
-                const redistributedLeads = await this.redistributeFailedCities(retriableCities, keyword, availableSDKs, sdks, sdkLimits, Math.ceil(stillNeed / retriableCities.length), seenCompanies, progressCallback, logsCallback, triedSDKs, permanentFailures);
-                allLeads.push(...redistributedLeads);
+                try {
+                    const redistributedLeads = await this.redistributeFailedCities(retriableCities, keyword, availableSDKs, sdks, sdkCredits, Math.ceil(stillNeed / retriableCities.length), seenCompanies, progressCallback, logsCallback, triedSDKs, permanentFailures);
+                    allLeads.push(...redistributedLeads);
+                }
+                catch (error) {
+                    logs += `❌ Redistribution failed: ${error.message}\n`;
+                    logsCallback(logs);
+                }
             }
+            // 2.7 [CHECK_PROGRESS]: Break if no new leads
             if (totalNewLeads === 0) {
                 logs += `🤷‍♂️ no new leads this round – calling it here\n`;
                 logsCallback(logs);
                 break;
             }
+            // 2.8 [DELAY]: Wait before next attempt
             if (attempt < __1.MAX_RETRIES)
                 await new Promise(resolve => setTimeout(resolve, 3000));
         }
-        // Final completion message
+        // ------ 3. Finalize and return ------ //
+        // 3.1 [COMPLETION_MESSAGE]: Log final status
         const finalCount = Math.min(allLeads.length, targetLimit);
         const completionRatio = finalCount / targetLimit;
         if (completionRatio >= 0.9) {
@@ -500,38 +531,87 @@ class Scraper {
         logsCallback(logs);
         return allLeads.slice(0, targetLimit);
     }
-    /** Assigns cities to SDKs based on availability and prior attempts */
-    createCitySDKAssignments(cities, availableSDKs, sdkLimits, targetLeads, triedSDKs) {
+    /** Assigns cities to SDKs based on equal distribution of target leads */
+    createCitySDKAssignments(cities, availableSDKs, sdkCredits, // Fixed: now accepts Record<string, SDKLimit>
+    targetLeads, triedSDKs) {
+        // ------ 1. Setup and initialization ------ //
         const assignments = {};
-        availableSDKs.forEach(sdk => assignments[sdk] = { cities: [], leadsPerCity: 0 });
-        cities.forEach(city => {
-            const untried = availableSDKs.filter(sdk => !triedSDKs.get(city)?.has(sdk) && sdkLimits[sdk].available > 0);
-            if (untried.length) {
-                const sdk = untried.reduce((a, b) => sdkLimits[a].available > sdkLimits[b].available ? a : b);
-                assignments[sdk].cities.push(city);
-            }
+        // Initialize assignments for each SDK
+        availableSDKs.forEach(sdk => {
+            assignments[sdk] = { cities: [], leadsPerCity: 0, sdkLeadLimit: 0 };
         });
-        const totalCities = Object.values(assignments).reduce((sum, { cities }) => sum + cities.length, 0);
-        if (totalCities) {
-            const baseLeadsPerCity = Math.ceil(targetLeads / totalCities);
-            for (const sdk in assignments) {
-                const { cities: sdkCities } = assignments[sdk];
-                if (sdkCities.length) {
-                    assignments[sdk].leadsPerCity = Math.min(baseLeadsPerCity, Math.floor(sdkLimits[sdk].available / sdkCities.length)) || 1;
+        if (!cities.length || !availableSDKs.length)
+            return assignments;
+        // ------ 2. Calculate distribution strategy ------ //
+        // Equal distribution approach - each SDK gets fair share
+        const leadsPerSDK = Math.ceil(targetLeads / availableSDKs.length);
+        const citiesPerSDK = Math.ceil(cities.length / availableSDKs.length);
+        // ------ 3. Smart city assignment with retry awareness ------ //
+        const cityQueue = [...cities];
+        let sdkIndex = 0;
+        while (cityQueue.length > 0) {
+            const city = cityQueue.shift();
+            let assigned = false;
+            // 3.1 [PRIORITY_ASSIGNMENT]: Try untried SDK combinations first
+            for (let i = 0; i < availableSDKs.length; i++) {
+                const currentSDKIndex = (sdkIndex + i) % availableSDKs.length;
+                const sdk = availableSDKs[currentSDKIndex];
+                // Check if this SDK hasn't tried this city yet and has capacity
+                const hasNotTriedCity = !triedSDKs.get(city)?.has(sdk);
+                const hasCapacity = assignments[sdk].cities.length < citiesPerSDK;
+                const hasCredits = sdkCredits[sdk]?.availableCredits > 0; // Fixed: access availableCredits from SDK object
+                if (hasNotTriedCity && hasCapacity && hasCredits) {
+                    assignments[sdk].cities.push(city);
+                    assigned = true;
+                    break;
+                }
+            }
+            // 3.2 [FALLBACK_ASSIGNMENT]: If no fresh SDK found, use best available
+            if (!assigned) {
+                const availableSDKsWithCapacity = availableSDKs.filter(sdk => assignments[sdk].cities.length < citiesPerSDK && sdkCredits[sdk]?.availableCredits > 0 // Fixed: access availableCredits
+                );
+                if (availableSDKsWithCapacity.length) {
+                    // Pick SDK with most available credits
+                    const bestSDK = availableSDKsWithCapacity.reduce((a, b) => sdkCredits[a].availableCredits > sdkCredits[b].availableCredits ? a : b // Fixed: access availableCredits
+                    );
+                    assignments[bestSDK].cities.push(city);
+                }
+            }
+            sdkIndex = (sdkIndex + 1) % availableSDKs.length;
+        }
+        // ------ 4. Calculate lead targets per SDK ------ //
+        for (const sdk in assignments) {
+            const { cities: sdkCities } = assignments[sdk];
+            if (sdkCities.length > 0) {
+                // 4.1 [SDK_LEAD_LIMIT]: Each SDK gets equal share of total target
+                assignments[sdk].sdkLeadLimit = Math.min(leadsPerSDK, sdkCredits[sdk].availableCredits); // Fixed: access availableCredits
+                // 4.2 [LEADS_PER_CITY]: Calculate optimal leads per city for this SDK
+                assignments[sdk].leadsPerCity = Math.ceil(assignments[sdk].sdkLeadLimit / sdkCities.length);
+                // 4.3 [CREDIT_CONSTRAINT]: Don't exceed SDK's available credits
+                const maxLeadsPerCity = Math.floor(sdkCredits[sdk].availableCredits / sdkCities.length); // Fixed: access availableCredits
+                if (maxLeadsPerCity > 0) {
+                    assignments[sdk].leadsPerCity = Math.min(assignments[sdk].leadsPerCity, maxLeadsPerCity);
+                }
+                else {
+                    assignments[sdk].leadsPerCity = 1; // minimum 1 lead per city attempt
                 }
             }
         }
         return assignments;
     }
     /** Processes cities for an SDK with rate limiting */
-    async processCitiesForSDK(sdk, sdkName, keyword, cities, leadsPerCity, seenCompanies, progressCallback, logsCallback, triedSDKs, SDK_PERSONALITIES, categorizeError, scrapeContactsFromWebsite) {
+    async searchBusinessesUsingSDK(sdk, sdkName, keyword, cities, leadsPerCity, seenCompanies, progressCallback, logsCallback, triedSDKs) {
+        // ------ 1. Initialize processing state ------ //
         const results = [];
-        const failedCities = [];
-        const retriableCities = [];
-        const permanentFailures = [];
+        const failedCities = []; // cities that had errors but could be retried
+        const retriableCities = []; // cities that hit rate limits but can be retried  
+        const permanentFailures = []; // cities with no leads available
+        const underperformingCities = []; // cities that didn't meet lead target
         let totalUsed = 0;
         const startTime = Date.now();
-        const personality = SDK_PERSONALITIES[sdkName] || {
+        // Calculate SDK's allocated lead limit (total leads this SDK should collect)
+        const sdkLeadLimit = leadsPerCity * cities.length;
+        const personality = this.SDK_PERSONALITIES[sdkName] || {
             emoji: '🤖',
             name: sdkName,
             greeting: (cities) => `🤖 ${sdkName}: processing ${cities.length} cities:`,
@@ -539,7 +619,7 @@ class Scraper {
             success: (count) => `   found ${count} leads`,
             failure: `   encountered some issues`,
         };
-        logsCallback(`${personality.emoji} ${sdkName}: Starting with ${cities.length} cities: ${cities.slice(0, 3).join(', ')}...\n`);
+        logsCallback(`${personality.emoji} ${sdkName}: Starting with ${cities.length} cities (target: ${sdkLeadLimit} leads): ${cities.slice(0, 3).join(', ')}...\n`);
         const delay = {
             hunterSDK: 2000,
             foursquareSDK: 500,
@@ -547,9 +627,19 @@ class Scraper {
             tomtomSDK: 400,
             rapidSDK: 300,
         }[sdkName] || 1000;
+        // ------ 2. Process each city with smart tracking ------ //
         for (let i = 0; i < cities.length; i++) {
+            // 2.1 [EARLY_EXIT_CHECK]: Stop if SDK reached its target
+            if (results.length >= sdkLeadLimit) {
+                logsCallback(`${personality.emoji} ${sdkName}: 🎯 Target reached! Found ${results.length}/${sdkLeadLimit} leads in ${i} cities - exiting early\n`);
+                // Mark remaining cities as candidates for redistribution
+                const remainingCities = cities.slice(i);
+                underperformingCities.push(...remainingCities);
+                break;
+            }
             const city = cities[i];
-            logsCallback(`${personality.emoji} ${sdkName}: Processing ${city}\n`);
+            logsCallback(`${personality.emoji} ${sdkName}: Processing ${city} (${results.length}/${sdkLeadLimit} leads found)\n`);
+            // 2.2 [TRACK_ATTEMPT]: Mark this city as tried by this SDK
             if (!triedSDKs.has(city))
                 triedSDKs.set(city, new Set());
             triedSDKs.get(city).add(sdkName);
@@ -563,6 +653,7 @@ class Scraper {
                     logsCallback(`${personality.emoji} ${sdkName}: No leads in ${city}\n`);
                     continue;
                 }
+                // 2.3 [FILTER_AND_ENRICH]: Process valid leads
                 const filteredLeads = businesses.filter((lead) => {
                     const key = `${lead.company}-${lead.address}`.toLowerCase().trim();
                     if (seenCompanies.has(key))
@@ -573,7 +664,7 @@ class Scraper {
                 const enrichedLeads = await Promise.all(filteredLeads.map(async (lead) => {
                     if (!lead.email && lead.website) {
                         try {
-                            const { email } = await scrapeContactsFromWebsite(lead.website);
+                            const { email } = await (0, scrapeContactsFromWebsite_1.scrapeContactsFromWebsite)(lead.website);
                             if (email)
                                 lead.email = email;
                         }
@@ -581,13 +672,30 @@ class Scraper {
                     }
                     return lead;
                 }));
-                results.push(...enrichedLeads);
+                // 2.4 [SMART_LEAD_ALLOCATION]: Only add leads up to SDK's allocated limit
+                const remainingSlots = sdkLeadLimit - results.length;
+                const leadsToAdd = enrichedLeads.slice(0, remainingSlots);
+                results.push(...leadsToAdd);
                 totalUsed += businesses.length;
-                progressCallback(enrichedLeads.length);
-                logsCallback(`${personality.emoji} ${sdkName}: Found ${enrichedLeads.length} leads in ${city}\n`);
+                progressCallback(leadsToAdd.length);
+                // 2.5 [UNDERPERFORMANCE_CHECK]: Track cities that didn't meet expectations
+                const expectedLeadsForCity = Math.ceil(sdkLeadLimit / cities.length);
+                if (leadsToAdd.length < expectedLeadsForCity * 0.7) { // if found less than 70% of expected
+                    underperformingCities.push(city);
+                    logsCallback(`${personality.emoji} ${sdkName}: Found ${leadsToAdd.length} leads in ${city} (expected ~${expectedLeadsForCity}) - marking for potential redistribution\n`);
+                }
+                else {
+                    logsCallback(`${personality.emoji} ${sdkName}: Found ${leadsToAdd.length} leads in ${city} (total: ${results.length}/${sdkLeadLimit}) ✅\n`);
+                }
+                // Check if we've hit the limit after adding leads
+                if (results.length >= sdkLeadLimit) {
+                    logsCallback(`${personality.emoji} ${sdkName}: 🔥 Perfect! Hit target of ${sdkLeadLimit} leads - wrapping up\n`);
+                    break;
+                }
             }
             catch (error) {
-                const scrapingError = categorizeError(error, city, sdkName);
+                // ------ 3. Handle processing errors ------ //
+                const scrapingError = this.categorizeError(error, city, sdkName);
                 logsCallback(`${personality.emoji} ${sdkName}: Error in ${city} - ${scrapingError.type}: ${scrapingError.message}\n`);
                 switch (scrapingError.type) {
                     case 'NOT_FOUND':
@@ -602,15 +710,31 @@ class Scraper {
                         if (scrapingError.retryable)
                             failedCities.push(city);
                         break;
-                    default: failedCities.push(city);
+                    default:
+                        failedCities.push(city);
                 }
             }
-            if (i < cities.length - 1)
+            // 2.6 [RATE_LIMIT_DELAY]: Respect rate limits between requests
+            if (i < cities.length - 1 && results.length < sdkLeadLimit) {
                 await new Promise(resolve => setTimeout(resolve, delay));
+            }
         }
+        // ------ 4. Generate final summary ------ //
         const elapsedSeconds = Math.round((Date.now() - startTime) / 1000);
-        logsCallback(`${personality.emoji} ${sdkName}: Finished - ${results.length} leads found in ${elapsedSeconds}s\n`);
-        return { leads: results, failedCities, retriableCities, permanentFailures, totalUsed };
+        const efficiency = cities.length > 0 ? Math.round((results.length / Math.min(cities.length, cities.length)) * 100) : 0;
+        // 4.1 [REDISTRIBUTION_CANDIDATES]: Combine all cities that could benefit from redistribution
+        const redistributionCandidates = [...new Set([...underperformingCities, ...failedCities, ...retriableCities])];
+        logsCallback(`${personality.emoji} ${sdkName}: Finished - ${results.length}/${sdkLeadLimit} leads found in ${elapsedSeconds}s\n`);
+        if (redistributionCandidates.length > 0) {
+            logsCallback(`${personality.emoji} ${sdkName}: 🔄 ${redistributionCandidates.length} cities marked for potential redistribution\n`);
+        }
+        return {
+            leads: results,
+            failedCities: redistributionCandidates, // combine all redistribution candidates
+            retriableCities,
+            permanentFailures,
+            totalUsed
+        };
     }
     /**
      * Merges two lead arrays and removes duplicates
@@ -658,14 +782,15 @@ class Scraper {
         return Math.round(remaining / rate);
     };
     /** Redistributes failed cities to other SDKs */
-    /** Enhanced redistribution with failure tracking and smart SDK selection */
     async redistributeFailedCities(failedCities, keyword, availableSDKs, sdks, sdkLimits, leadsPerCity, seenCompanies, progressCallback, logsCallback, triedSDKs, permanentFailures) {
+        // ------ 1. Setup and filter cities ------ //
         const redistributedLeads = [];
         // Filter out permanently failed cities
         const retriableCities = failedCities.filter(city => !permanentFailures.has(city));
         if (!retriableCities.length) {
             return redistributedLeads;
         }
+        // ------ 2. Show handoff messages for failed SDKs ------ //
         // Group cities by their failed SDK for handoff messaging
         const failedBySDK = {};
         retriableCities.forEach(city => {
@@ -683,36 +808,45 @@ class Scraper {
                 logsCallback(`${personality.handoff(cities)}\n`);
             }
         }
-        // Process redistribution
+        // ------ 3. Process redistribution for each city ------ //
         for (const city of retriableCities) {
             const triedSDKsForCity = triedSDKs.get(city) || new Set();
+            // 3.1 [FIND_UNTRIED_SDKS]: Get SDKs that haven't tried this city yet
             const untriedSDKs = availableSDKs.filter(sdk => !triedSDKsForCity.has(sdk) &&
-                sdkLimits[sdk]?.available > 0);
-            if (!untriedSDKs.length)
+                sdkLimits[sdk]?.available > 0 &&
+                sdks[sdk]?.searchBusinesses);
+            if (!untriedSDKs.length) {
+                permanentFailures.add(city);
                 continue;
-            // Select best available SDK
+            }
+            // 3.2 [SELECT_BEST_SDK]: Pick SDK with most available credits
             const selectedSDK = untriedSDKs.reduce((best, current) => (sdkLimits[current]?.available || 0) > (sdkLimits[best]?.available || 0) ? current : best);
             const sdk = sdks[selectedSDK];
             if (!sdk?.searchBusinesses)
                 continue;
-            // Mark as tried
+            // 3.3 [MARK_AS_TRIED]: Track this attempt
             triedSDKsForCity.add(selectedSDK);
-            // Show acceptance message for new SDK - NOW THIS WILL WORK
+            // Show acceptance message for new SDK
             const SDK_PERSONALITIES = this.SDK_PERSONALITIES;
             const newPersonality = SDK_PERSONALITIES[selectedSDK];
             if (newPersonality?.acceptance && Math.random() < 0.3) { // 30% chance to show acceptance
                 logsCallback(`${newPersonality.acceptance}\n`);
             }
+            // ------ 4. Execute redistribution attempt ------ //
             try {
-                const businesses = await sdk.searchBusinesses(keyword, city, leadsPerCity);
+                const businesses = await this.withTimeout(sdk.searchBusinesses(keyword, city, leadsPerCity), 30000, // 30s timeout
+                `Timeout after 30s for ${selectedSDK} in ${city}`);
+                // Type guard: check if result is error string
                 if (typeof businesses === "string") {
                     throw new Error(businesses);
                 }
-                if (!businesses || businesses.length === 0) {
+                // Type guard: ensure businesses is array and has length
+                if (!Array.isArray(businesses) || businesses.length === 0) {
                     permanentFailures.add(city);
+                    logsCallback(`${this.SDK_EMOJIS[selectedSDK]} ${selectedSDK}: no luck in ${city} either\n`);
                     continue;
                 }
-                // Process leads (same deduplication logic)
+                // 4.1 [FILTER_DUPLICATES]: Process leads with deduplication logic
                 const filteredLeads = businesses.filter((lead) => {
                     const key = `${lead.company}-${lead.address}`.toLowerCase().trim();
                     if (seenCompanies.has(key))
@@ -720,7 +854,7 @@ class Scraper {
                     seenCompanies.add(key);
                     return true;
                 });
-                // Email enrichment
+                // 4.2 [ENRICH_LEADS]: Email enrichment
                 const enrichedLeads = await Promise.all(filteredLeads.map(async (lead) => {
                     if (!lead.email && lead.website) {
                         try {
@@ -734,19 +868,31 @@ class Scraper {
                     }
                     return lead;
                 }));
+                // 4.3 [SUCCESS_TRACKING]: Update results and progress
                 redistributedLeads.push(...enrichedLeads);
                 progressCallback(enrichedLeads.length);
-                // Update usage
-                await this.updateDBSDKFreeTier({ sdkName: selectedSDK, usedCount: 1, increment: true });
+                logsCallback(`${this.SDK_EMOJIS[selectedSDK]} ${selectedSDK}: 🎯 found ${enrichedLeads.length} leads in ${city}! total redistributed: ${redistributedLeads.length}\n`);
+                // 4.4 [UPDATE_USAGE]: Track SDK usage
+                await this.updateDBSDKFreeTier({ sdkName: selectedSDK, usedCount: businesses.length, increment: true });
             }
             catch (error) {
+                // ------ 5. Handle redistribution failures ------ //
                 const scrapingError = this.categorizeError(error, city, selectedSDK);
-                if (scrapingError.type === 'NOT_FOUND') {
+                logsCallback(`${this.SDK_EMOJIS[selectedSDK]} ${selectedSDK}: redistribution failed for ${city} - ${scrapingError.type}: ${scrapingError.message}\n`);
+                if (scrapingError.type === 'NOT_FOUND' || !scrapingError.retryable) {
                     permanentFailures.add(city);
                 }
             }
-            // Rate limiting
-            await new Promise(resolve => setTimeout(resolve, 200));
+            // 5.1 [RATE_LIMIT_DELAY]: Rate limiting between requests
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        // ------ 6. Final results summary ------ //
+        const successfulRedistributions = redistributedLeads.length;
+        if (successfulRedistributions > 0) {
+            logsCallback(`✅ redistribution complete! rescued ${successfulRedistributions} leads from ${retriableCities.length} cities 🔥\n`);
+        }
+        else {
+            logsCallback(`😅 redistribution didn't find much - these locations might just be tapped out\n`);
         }
         return redistributedLeads;
     }

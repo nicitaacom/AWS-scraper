@@ -19,6 +19,18 @@ export type JobPayload = {
     jobNumber?: number;
     originalJobId?: string;
 };
+export interface SDKLimit {
+    availableCredits: number;
+    totalCredits: number;
+    usedCredits: number;
+    limitType: 'daily' | 'monthly' | 'fixed';
+}
+export interface SDKAvailabilityResult {
+    availableSDKNames: string[];
+    exhaustedSDKNames: string[];
+    status: string;
+    sdkCredits: Record<string, SDKLimit>;
+}
 export interface ScrapingError {
     type: 'NOT_FOUND' | 'RATE_LIMITED' | 'TIMEOUT' | 'API_ERROR' | 'UNKNOWN';
     message: string;
@@ -168,7 +180,9 @@ export type PusherEventMap = {
  * Assigns cities to SDKs based on availability and prior attempts
   private createCitySDKAssignments(cities: string[],availableSDKs: string[],sdkLimits: Record<string, { available: number }>,targetLeads: number,
   triedSDKs: Map<string, Set<string>>): Record<string, { cities: string[]; leadsPerCity: number }> {
- *private async processCitiesForSDK(sdk: any,sdkName: string,keyword: string,cities: string[],leadsPerCity: number,
+ * private async searchBusinessesUsingSDK(sdk: BusinessSDK, sdkName: string, keyword: string, cities: string[], leadsPerCity: number,
+   seenCompanies: Set<string>, progressCallback: (count: number) => void, logsCallback: (logs: string) => void, triedSDKs: Map<string, Set<string>>
+): Promise<SDKProcessingSummary> {
   seenCompanies: Set<string>,progressCallback: (count: number) => void,logsCallback: (logs: string) => void,
   triedSDKs: Map<string, Set<string>>): Promise<SDKProcessingSummary> {
 

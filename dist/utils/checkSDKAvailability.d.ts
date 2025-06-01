@@ -1,10 +1,3 @@
-export declare const checkSDKAvailability: (supabase: any) => Promise<{
-    available: string[];
-    unavailable: string[];
-    status: string;
-    sdkLimits: Record<string, {
-        available: number;
-        total: number;
-    }>;
-}>;
+import { SDKAvailabilityResult } from "interfaces/interfaces";
+export declare const checkSDKAvailability: (supabase: any) => Promise<SDKAvailabilityResult>;
 //# sourceMappingURL=checkSDKAvailability.d.ts.map
