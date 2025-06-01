@@ -632,41 +632,90 @@ public async scrapeLeads(
   return allLeads.slice(0, targetLimit)
 }
 
- /** Assigns cities to SDKs based on availability and prior attempts */
- private createCitySDKAssignments(
+ /** Assigns cities to SDKs based on equal distribution of target leads */
+private createCitySDKAssignments(
   cities: string[],
   availableSDKs: string[],
   sdkLimits: Record<string, { available: number }>,
   targetLeads: number,
   triedSDKs: Map<string, Set<string>>
-): Record<string, { cities: string[]; leadsPerCity: number }> {
-  const assignments: Record<string, { cities: string[]; leadsPerCity: number }> = {}
-  availableSDKs.forEach(sdk => assignments[sdk] = { cities: [], leadsPerCity: 0 })
-
-  cities.forEach(city => {
-    const untried = availableSDKs.filter(sdk => !triedSDKs.get(city)?.has(sdk) && sdkLimits[sdk].available > 0)
-    if (untried.length) {
-      const sdk = untried.reduce((a, b) => sdkLimits[a].available > sdkLimits[b].available ? a : b)
-      assignments[sdk].cities.push(city)
-    }
+): Record<string, { cities: string[]; leadsPerCity: number; sdkLeadLimit: number }> {
+  const assignments: Record<string, { cities: string[]; leadsPerCity: number; sdkLeadLimit: number }> = {}
+  
+  // Initialize assignments for each SDK
+  availableSDKs.forEach(sdk => {
+    assignments[sdk] = { cities: [], leadsPerCity: 0, sdkLeadLimit: 0 }
   })
 
-  const totalCities = Object.values(assignments).reduce((sum, { cities }) => sum + cities.length, 0)
-  if (totalCities) {
-    const baseLeadsPerCity = Math.ceil(targetLeads / totalCities)
-    for (const sdk in assignments) {
-      const { cities: sdkCities } = assignments[sdk]
-      if (sdkCities.length) {
-        assignments[sdk].leadsPerCity = Math.min(baseLeadsPerCity, Math.floor(sdkLimits[sdk].available / sdkCities.length)) || 1
+  // Calculate leads per SDK (equal distribution)
+  const leadsPerSDK = Math.ceil(targetLeads / availableSDKs.length)
+  
+  // Calculate cities per SDK (equal distribution)  
+  const citiesPerSDK = Math.ceil(cities.length / availableSDKs.length)
+
+  // Assign cities to SDKs round-robin style, prioritizing untried combinations
+  const cityQueue = [...cities]
+  let sdkIndex = 0
+
+  while (cityQueue.length > 0) {
+    const city = cityQueue.shift()!
+    let assigned = false
+
+    // Try to assign to an SDK that hasn't tried this city yet
+    for (let i = 0; i < availableSDKs.length; i++) {
+      const currentSDKIndex = (sdkIndex + i) % availableSDKs.length
+      const sdk = availableSDKs[currentSDKIndex]
+      
+      // Check if this SDK hasn't tried this city and has capacity
+      if (!triedSDKs.get(city)?.has(sdk) && 
+          assignments[sdk].cities.length < citiesPerSDK &&
+          sdkLimits[sdk].available > 0) {
+        assignments[sdk].cities.push(city)
+        assigned = true
+        break
+      }
+    }
+
+    // If no untried SDK found, assign to SDK with most available capacity
+    if (!assigned) {
+      const bestSDK = availableSDKs
+        .filter(sdk => assignments[sdk].cities.length < citiesPerSDK && sdkLimits[sdk].available > 0)
+        .reduce((a, b) => sdkLimits[a].available > sdkLimits[b].available ? a : b, availableSDKs[0])
+      
+      if (bestSDK && assignments[bestSDK].cities.length < citiesPerSDK) {
+        assignments[bestSDK].cities.push(city)
+      }
+    }
+
+    sdkIndex = (sdkIndex + 1) % availableSDKs.length
+  }
+
+  // Set lead limits and leads per city for each SDK
+  for (const sdk in assignments) {
+    const { cities: sdkCities } = assignments[sdk]
+    if (sdkCities.length > 0) {
+      // Each SDK gets an equal share of total target leads
+      assignments[sdk].sdkLeadLimit = Math.min(leadsPerSDK, sdkLimits[sdk].available)
+      
+      // Calculate leads per city for this SDK
+      assignments[sdk].leadsPerCity = Math.ceil(assignments[sdk].sdkLeadLimit / sdkCities.length)
+      
+      // Ensure we don't exceed SDK's available limit
+      const maxLeadsPerCity = Math.floor(sdkLimits[sdk].available / sdkCities.length)
+      if (maxLeadsPerCity > 0) {
+        assignments[sdk].leadsPerCity = Math.min(assignments[sdk].leadsPerCity, maxLeadsPerCity)
+      } else {
+        assignments[sdk].leadsPerCity = 1 // Minimum 1 lead per city
       }
     }
   }
+
   return assignments
 }
 
 /** Processes cities for an SDK with rate limiting */
 private async searchBusinessesUsingSDK(
-  sdk: BusinessSDK, // Updated type from any to BusinessSDK
+  sdk: BusinessSDK,
   sdkName: string,
   keyword: string,
   cities: string[],
@@ -676,12 +725,15 @@ private async searchBusinessesUsingSDK(
   logsCallback: (logs: string) => void,
   triedSDKs: Map<string, Set<string>>
 ): Promise<SDKProcessingSummary> {
-  const results: Lead[] = [];
-  const failedCities: string[] = [];
-  const retriableCities: string[] = [];
-  const permanentFailures: string[] = [];
-  let totalUsed = 0;
-  const startTime = Date.now();
+  const results: Lead[] = []
+  const failedCities: string[] = []
+  const retriableCities: string[] = []
+  const permanentFailures: string[] = []
+  let totalUsed = 0
+  const startTime = Date.now()
+
+  // Calculate SDK's allocated lead limit (total leads this SDK should collect)
+  const sdkLeadLimit = leadsPerCity * cities.length
 
   const personality = this.SDK_PERSONALITIES[sdkName] || {
     emoji: '🤖',
@@ -690,9 +742,9 @@ private async searchBusinessesUsingSDK(
     cityList: (cities) => `   [${cities.slice(0, 4).join(', ')}${cities.length > 4 ? ', ...]' : ']'}`,
     success: (count) => `   found ${count} leads`,
     failure: `   encountered some issues`,
-  };
+  }
 
-  logsCallback(`${personality.emoji} ${sdkName}: Starting with ${cities.length} cities: ${cities.slice(0, 3).join(', ')}...\n`);
+  logsCallback(`${personality.emoji} ${sdkName}: Starting with ${cities.length} cities (target: ${sdkLeadLimit} leads): ${cities.slice(0, 3).join(', ')}...\n`)
 
   const delay = { 
     hunterSDK: 2000, 
@@ -700,75 +752,93 @@ private async searchBusinessesUsingSDK(
     googleCustomSearchSDK: 1000, 
     tomtomSDK: 400,
     rapidSDK: 300,
-  }[sdkName] || 1000;
+  }[sdkName] || 1000
 
   for (let i = 0; i < cities.length; i++) {
-    const city = cities[i];
-    logsCallback(`${personality.emoji} ${sdkName}: Processing ${city}\n`);
+    // Early exit if SDK has reached its allocated lead limit
+    if (results.length >= sdkLeadLimit) {
+      logsCallback(`${personality.emoji} ${sdkName}: 🎯 Target reached! Found ${results.length}/${sdkLeadLimit} leads in ${i} cities - exiting early\n`)
+      break
+    }
 
-    if (!triedSDKs.has(city)) triedSDKs.set(city, new Set());
-    triedSDKs.get(city)!.add(sdkName);
+    const city = cities[i]
+    logsCallback(`${personality.emoji} ${sdkName}: Processing ${city} (${results.length}/${sdkLeadLimit} leads found)\n`)
+
+    if (!triedSDKs.has(city)) triedSDKs.set(city, new Set())
+    triedSDKs.get(city)!.add(sdkName)
 
     try {
       const businesses = await this.withTimeout(
         sdk.searchBusinesses(keyword, city, leadsPerCity),
         30000, // 30s timeout
         `Timeout after 30s for ${sdkName} in ${city}`
-      );
+      )
 
-      if (typeof businesses === "string") throw new Error(businesses);
+      if (typeof businesses === "string") throw new Error(businesses)
       if (!businesses || businesses.length === 0) {
-        permanentFailures.push(city);
-        logsCallback(`${personality.emoji} ${sdkName}: No leads in ${city}\n`);
-        continue;
+        permanentFailures.push(city)
+        logsCallback(`${personality.emoji} ${sdkName}: No leads in ${city}\n`)
+        continue
       }
 
       const filteredLeads = businesses.filter((lead: Lead) => {
-        const key = `${lead.company}-${lead.address}`.toLowerCase().trim();
-        if (seenCompanies.has(key)) return false;
-        seenCompanies.add(key);
-        return true;
-      });
+        const key = `${lead.company}-${lead.address}`.toLowerCase().trim()
+        if (seenCompanies.has(key)) return false
+        seenCompanies.add(key)
+        return true
+      })
 
       const enrichedLeads = await Promise.all(
         filteredLeads.map(async (lead: Lead) => {
           if (!lead.email && lead.website) {
             try {
-              const { email } = await scrapeContactsFromWebsite(lead.website);
-              if (email) lead.email = email;
+              const { email } = await scrapeContactsFromWebsite(lead.website)
+              if (email) lead.email = email
             } catch {}
           }
-          return lead;
+          return lead
         })
-      );
+      )
 
-      results.push(...enrichedLeads);
-      totalUsed += businesses.length;
-      progressCallback(enrichedLeads.length);
-      logsCallback(`${personality.emoji} ${sdkName}: Found ${enrichedLeads.length} leads in ${city}\n`);
+      // Only add leads up to the SDK's allocated limit
+      const remainingSlots = sdkLeadLimit - results.length
+      const leadsToAdd = enrichedLeads.slice(0, remainingSlots)
+      
+      results.push(...leadsToAdd)
+      totalUsed += businesses.length
+      progressCallback(leadsToAdd.length)
+      logsCallback(`${personality.emoji} ${sdkName}: Found ${leadsToAdd.length} leads in ${city} (total: ${results.length}/${sdkLeadLimit})\n`)
+
+      // Check if we've hit the limit after adding leads
+      if (results.length >= sdkLeadLimit) {
+        logsCallback(`${personality.emoji} ${sdkName}: 🔥 Perfect! Hit target of ${sdkLeadLimit} leads - wrapping up\n`)
+        break
+      }
 
     } catch (error: any) {
-      const scrapingError = this.categorizeError(error, city, sdkName);
-      logsCallback(`${personality.emoji} ${sdkName}: Error in ${city} - ${scrapingError.type}: ${scrapingError.message}\n`);
+      const scrapingError = this.categorizeError(error, city, sdkName)
+      logsCallback(`${personality.emoji} ${sdkName}: Error in ${city} - ${scrapingError.type}: ${scrapingError.message}\n`)
 
       switch (scrapingError.type) {
-        case 'NOT_FOUND': permanentFailures.push(city); break;
-        case 'RATE_LIMITED': if (scrapingError.retryable) retriableCities.push(city); break;
+        case 'NOT_FOUND': permanentFailures.push(city); break
+        case 'RATE_LIMITED': if (scrapingError.retryable) retriableCities.push(city); break
         case 'TIMEOUT':
-        case 'API_ERROR': if (scrapingError.retryable) failedCities.push(city); break;
-        default: failedCities.push(city);
+        case 'API_ERROR': if (scrapingError.retryable) failedCities.push(city); break
+        default: failedCities.push(city)
       }
     }
 
-    if (i < cities.length - 1) await new Promise(resolve => setTimeout(resolve, delay));
+    if (i < cities.length - 1 && results.length < sdkLeadLimit) {
+      await new Promise(resolve => setTimeout(resolve, delay))
+    }
   }
 
-  const elapsedSeconds = Math.round((Date.now() - startTime) / 1000);
-  logsCallback(`${personality.emoji} ${sdkName}: Finished - ${results.length} leads found in ${elapsedSeconds}s\n`);
+  const elapsedSeconds = Math.round((Date.now() - startTime) / 1000)
+  const efficiency = cities.length > 0 ? Math.round((results.length / Math.min(cities.length, cities.length)) * 100) : 0
+  logsCallback(`${personality.emoji} ${sdkName}: Finished - ${results.length}/${sdkLeadLimit} leads found in ${elapsedSeconds}s\n`)
 
-  return { leads: results, failedCities, retriableCities, permanentFailures, totalUsed };
+  return { leads: results, failedCities, retriableCities, permanentFailures, totalUsed }
 }
-
 
 /**
  * Merges two lead arrays and removes duplicates
