@@ -122,7 +122,61 @@ export type PusherEventMap = {
 /**
  * Also I have scraper class that initialized as new Scraper()
  * 
- * 
+ *
+ interface SDKs {
+   foursquareSDK: string
+   googleCustomSearchSDK: string
+   hunterSDK: string
+   rapidSDK:string
+   searchSDK: string
+   serpSDK: string
+   tomtomSDK: string
+   [index: string]: string
+ }
+ 
+ interface SDKPersonality {
+   emoji: string
+   name: string
+   greeting: (cities: string[]) => string
+   cityList: (cities: string[]) => string
+   success: (count: number) => string
+   handoff: (cities: string[]) => string
+   failure: string
+   acceptance?: string // Make acceptance optional
+ }
+ 
+ // Update your constructor with the fixed SDK_PERSONALITIES
+ export class Scraper {
+   constructor(
+     private openai: OpenAI,
+     private s3: S3Client,
+     private pusher: Pusher,
+     protected supabaseAdmin: SupabaseClient<any, "public", any>,
+     protected lambda: LambdaClient,
+     protected AWS_LAMBDA_FUNCTION_NAME = process.env.AWS_LAMBDA_FUNCTION_NAME || "lead-scraper",
+     protected SDK_EMOJIS: SDKs = {
+       foursquareSDK: '📍',
+       googleCustomSearchSDK: '🌐',
+       hunterSDK: '🕵️',
+       rapidSDK: '⚡',
+       searchSDK: '🔎',
+       serpSDK: '📊',
+       tomtomSDK: '🗺️',
+     },
+     private readonly SDK_PERSONALITIES: Record<string, SDKPersonality> = {
+       hunterSDK: {
+         emoji: '🕵️',
+         name: 'hunterSDK',
+         greeting: (cities: string[]) => `🕵️ hunterSDK: I'm on it! gonna blast through ${cities.length} cities:`,
+         cityList: (cities: string[]) => `   [${cities.slice(0, 4).join(', ')}${cities.length > 4 ? `, …]` : ']'}`,
+         success: (count: number) => `   I found ${count} leads 🔥`,
+         handoff: (cities: string[]) => `hey **googleCustomSearchSDK**, could you take on my cities? - I'm kinda getting 429s 😮`,
+         failure: `   getting some timeouts here 😤`,
+         acceptance: `sure thing! I'll handle these cities for ya 🕵️`
+       },
+       foursquareSDK: {
+         emoji: '🏢',
+         // etc
   /**
  * Validates input payload with detailed error messages
  * public validateInput = (payload: JobPayload): { valid: boolean; error?: string } => {
