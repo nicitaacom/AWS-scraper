@@ -17,6 +17,7 @@ const SearchSDK_1 = require("../SDK/SearchSDK");
 const SerpSDK_1 = require("../SDK/SerpSDK");
 // import { TomTomSDK } from "../SDK/TomTomSDK";
 const RapidSDK_1 = require("../SDK/RapidSDK");
+const OxylabsSDK_1 = require("../SDK/OxylabsSDK");
 // import { ApifyContactInfoSDK } from "../SDK/doesn't work/ApifyContactInfoSDK";
 // import { ScrapingBeeSDK } from "../SDK/doesn't work/ScrapingBeeSDK";
 function initializeClients() {
@@ -54,6 +55,7 @@ function initializeClients() {
             // apifyContactInfoSDK: new ApifyContactInfoSDK(process.env.APIFY_API_KEY),
             // scrapingBeeSDK: new ScrapingBeeSDK(process.env.SCRAPING_BEE_API_KEY),
             rapidSDK: new RapidSDK_1.RapidSDK(process.env.RAPID_API_KEY),
+            oxylabsSDK: new OxylabsSDK_1.OxylabsSDK(process.env.OXYLABS_USERNAME, process.env.OXYLABS_PASSWORD),
         };
     }
     catch (error) {

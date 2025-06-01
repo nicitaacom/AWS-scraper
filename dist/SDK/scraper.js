@@ -17,13 +17,12 @@ class Scraper {
     SDK_EMOJIS;
     SDK_PERSONALITIES;
     constructor(openai, s3, pusher, supabaseAdmin, lambda, AWS_LAMBDA_FUNCTION_NAME = process.env.AWS_LAMBDA_FUNCTION_NAME || "lead-scraper", SDK_EMOJIS = {
-        foursquareSDK: '📍',
         googleCustomSearchSDK: '🌐',
         hunterSDK: '🕵️',
         rapidSDK: '⚡',
         searchSDK: '🔎',
         serpSDK: '📊',
-        tomtomSDK: '🗺️',
+        oxylabsSDK: '👁️‍🗨️',
     }, SDK_PERSONALITIES = {
         hunterSDK: {
             emoji: '🕵️',

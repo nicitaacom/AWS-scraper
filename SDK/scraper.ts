@@ -14,6 +14,7 @@ interface SDKs {
   rapidSDK:string
   searchSDK: string
   serpSDK: string
+  oxylabsSDK: string
   [index: string]: string
 }
 
@@ -48,6 +49,7 @@ export class Scraper {
       rapidSDK: '⚡',
       searchSDK: '🔎',
       serpSDK: '📊',
+      oxylabsSDK: '👁️‍🗨️',
     },
     private readonly SDK_PERSONALITIES: Record<string, SDKPersonality> = {
       hunterSDK: {

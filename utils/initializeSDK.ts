@@ -11,6 +11,7 @@ import { SearchSDK } from "../SDK/SearchSDK";
 import { SerpSDK } from "../SDK/SerpSDK";
 // import { TomTomSDK } from "../SDK/TomTomSDK";
 import { RapidSDK } from "../SDK/RapidSDK";
+import { OxylabsSDK } from "../SDK/OxylabsSDK";
 // import { ApifyContactInfoSDK } from "../SDK/doesn't work/ApifyContactInfoSDK";
 // import { ScrapingBeeSDK } from "../SDK/doesn't work/ScrapingBeeSDK";
 
@@ -55,6 +56,7 @@ export function initializeClients() {
       // apifyContactInfoSDK: new ApifyContactInfoSDK(process.env.APIFY_API_KEY),
       // scrapingBeeSDK: new ScrapingBeeSDK(process.env.SCRAPING_BEE_API_KEY),
       rapidSDK: new RapidSDK(process.env.RAPID_API_KEY),
+      oxylabsSDK: new OxylabsSDK(process.env.OXYLABS_USERNAME, process.env.OXYLABS_PASSWORD),
       
     }
   } catch (error: unknown) {

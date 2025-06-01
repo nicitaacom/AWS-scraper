@@ -7,6 +7,7 @@ import { HunterSDK } from "../SDK/HunterSDK";
 import { SearchSDK } from "../SDK/SearchSDK";
 import { SerpSDK } from "../SDK/SerpSDK";
 import { RapidSDK } from "../SDK/RapidSDK";
+import { OxylabsSDK } from "../SDK/OxylabsSDK";
 export declare function initializeClients(): string | {
     lambda: LambdaClient;
     s3: S3Client;
@@ -18,5 +19,6 @@ export declare function initializeClients(): string | {
     searchSDK: SearchSDK;
     serpSDK: SerpSDK;
     rapidSDK: RapidSDK;
+    oxylabsSDK: OxylabsSDK;
 };
 //# sourceMappingURL=initializeSDK.d.ts.map

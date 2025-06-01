@@ -5,13 +5,12 @@ import { DBUpdate, JobPayload, Lead, SDKUsageUpdate } from "../interfaces/interf
 import { S3Client } from "@aws-sdk/client-s3";
 import { LambdaClient } from "@aws-sdk/client-lambda";
 interface SDKs {
-    foursquareSDK: string;
     googleCustomSearchSDK: string;
     hunterSDK: string;
     rapidSDK: string;
     searchSDK: string;
     serpSDK: string;
-    tomtomSDK: string;
+    oxylabsSDK: string;
     [index: string]: string;
 }
 interface SDKPersonality {
