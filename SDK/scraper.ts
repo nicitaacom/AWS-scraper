@@ -20,25 +20,114 @@ interface SDKs {
   [index: string]: string
 }
 
-export class Scraper {
+interface SDKPersonality {
+  emoji: string
+  name: string
+  greeting: (cities: string[]) => string
+  cityList: (cities: string[]) => string
+  success: (count: number) => string
+  handoff: (cities: string[]) => string
+  failure: string
+  acceptance?: string // Make acceptance optional
+}
 
+// Define an interface for the SDK to ensure type safety
+interface BusinessSDK {
+  searchBusinesses: (keyword: string, city: string, leadsPerCity: number) => Promise<Lead[] | string>;
+}
+
+// Update your constructor with the fixed SDK_PERSONALITIES
+export class Scraper {
   constructor(
-    private openai:OpenAI,
-    private s3:S3Client,
-    private pusher:Pusher,
-    protected supabaseAdmin:SupabaseClient<any, "public", any>,
-    protected lambda:LambdaClient,
+    private openai: OpenAI,
+    private s3: S3Client,
+    private pusher: Pusher,
+    protected supabaseAdmin: SupabaseClient<any, "public", any>,
+    protected lambda: LambdaClient,
     protected AWS_LAMBDA_FUNCTION_NAME = process.env.AWS_LAMBDA_FUNCTION_NAME || "lead-scraper",
     protected SDK_EMOJIS: SDKs = {
       foursquareSDK: '📍',
       googleCustomSearchSDK: '🌐',
       hunterSDK: '🕵️',
-      rapidSDK:'⚡',
+      rapidSDK: '⚡',
       searchSDK: '🔎',
       serpSDK: '📊',
       tomtomSDK: '🗺️',
+    },
+    private readonly SDK_PERSONALITIES: Record<string, SDKPersonality> = {
+      hunterSDK: {
+        emoji: '🕵️',
+        name: 'hunterSDK',
+        greeting: (cities: string[]) => `🕵️ hunterSDK: I'm on it! gonna blast through ${cities.length} cities:`,
+        cityList: (cities: string[]) => `   [${cities.slice(0, 4).join(', ')}${cities.length > 4 ? `, …]` : ']'}`,
+        success: (count: number) => `   I found ${count} leads 🔥`,
+        handoff: (cities: string[]) => `hey **googleCustomSearchSDK**, could you take on my cities? - I'm kinda getting 429s 😮`,
+        failure: `   getting some timeouts here 😤`,
+        acceptance: `sure thing! I'll handle these cities for ya 🕵️`
+      },
+      foursquareSDK: {
+        emoji: '🏢',
+        name: 'foursquareSDK',
+        greeting: (cities: string[]) => `🏢 foursquareSDK: ready to rock! taking on ${cities.length} cities:`,
+        cityList: (cities: string[]) => `   [${cities.slice(0, 4).join(', ')}${cities.length > 4 ? `, …]` : ']'}`,
+        success: (count: number) => `   bagged ${count} solid leads 💼`,
+        handoff: (cities: string[]) => `yo **rapidSDK**, mind helping me out? - these cities are being stubborn 🤷‍♂️`,
+        failure: `   hitting some walls here 🧱`,
+        acceptance: `no problem! got these cities covered 🏢`
+      },
+      googleCustomSearchSDK: {
+        emoji: '🌐',
+        name: 'googleCustomSearchSDK',
+        greeting: (cities: string[]) => `🌐 googleCustomSearchSDK: is up! gonna blast through ${cities.length} cities:`,
+        cityList: (cities: string[]) => `   [${cities.slice(0, 4).join(', ')}${cities.length > 4 ? `, …]` : ']'}`,
+        success: (count: number) => `   I found ${count} leads – giving it all I got 💪`,
+        handoff: (cities: string[]) => `**hunterSDK**, need backup on these cities! - running into some limits 🚧`,
+        acceptance: `ofc bro! np - I'll take care of all this for ya`,
+        failure: `   some technical difficulties 🔧`
+      },
+      tomtomSDK: {
+        emoji: '🗺️',
+        name: 'tomtomSDK',
+        greeting: (cities: string[]) => `🗺️ tomtomSDK: mapping out ${cities.length} cities for ya:`,
+        cityList: (cities: string[]) => `   [${cities.slice(0, 4).join(', ')}${cities.length > 4 ? `, …]` : ']'}`,
+        success: (count: number) => `   navigated to ${count} fresh leads 🧭`,
+        handoff: (cities: string[]) => `**foursquareSDK**, these cities need your touch! - I'm maxed out 📍`,
+        failure: `   lost signal on some cities 📡`,
+        acceptance: `copy that! mapping these cities now 🗺️`
+      },
+      rapidSDK: {
+        emoji: '⚡',
+        name: 'rapidSDK',
+        greeting: (cities: string[]) => `⚡ rapidSDK: is up! gonna blast through ${cities.length} cities:`,
+        cityList: (cities: string[]) => `   [${cities.slice(0, 4).join(', ')}${cities.length > 4 ? `, …]` : ']'}`,
+        success: (count: number) => `   blazed through and got ${count} leads ⚡`,
+        handoff: (cities: string[]) => `**tomtomSDK**, can you handle these for me? - hitting some speed bumps 🚫`,
+        failure: `   circuits overloaded 🔥`,
+        acceptance: `⚡ on it! these cities won't know what hit em`
+      },
+      searchSDK: {
+        emoji: '🔎',
+        name: 'searchSDK',
+        greeting: (cities: string[]) => `🔎 searchSDK: searching through ${cities.length} cities:`,
+        cityList: (cities: string[]) => `   [${cities.slice(0, 4).join(', ')}${cities.length > 4 ? `, …]` : ']'}`,
+        success: (count: number) => `   discovered ${count} quality leads 🔍`,
+        handoff: (cities: string[]) => `**serpSDK**, need your help with these cities! - search limits reached 🚨`,
+        failure: `   search queries timed out 🔍`,
+        acceptance: `absolutely! starting my search algorithms now 🔎`
+      },
+      serpSDK: {
+        emoji: '📊',
+        name: 'serpSDK',
+        greeting: (cities: string[]) => `📊 serpSDK: analyzing ${cities.length} cities:`,
+        cityList: (cities: string[]) => `   [${cities.slice(0, 4).join(', ')}${cities.length > 4 ? `, …]` : ']'}`,
+        success: (count: number) => `   analyzed and found ${count} leads 📈`,
+        handoff: (cities: string[]) => `**searchSDK**, can you take over these cities? - data limits exceeded 📊`,
+        failure: `   analysis servers overloaded 📉`,
+        acceptance: `analyzing now! data processing in progress 📊`
+      }
     }
   ) {}
+  
 
   /**
  * Validates input payload with detailed error messages
@@ -395,114 +484,151 @@ public async scrapeLeads(
   logsCallback: (logs: string) => void,
   sdks: Record<string, any>
 ): Promise<Lead[]> {
-  // ------ 1. Setup the vibes ------ //
-  let logs = `🚀 Scraping ${cities.length} cities for "${keyword}"\n🎯 Target: ${targetLimit} leads (already got ${existingLeads.length})\n`
+  // ------ 1. Initialize variables and setup ------ //
+  // 1.1 [STARTUP_MESSAGE]: Log job startup
+  const remaining = targetLimit - existingLeads.length
+  let logs = `🎯 job1 – ok I'm running to scrape ${targetLimit} leads for you\n`
+  if (existingLeads.length > 0) {
+    logs += `📊 already got ${existingLeads.length} bangers – hunting for ${remaining} more 🔥\n`
+  }
   logsCallback(logs)
 
+  // 1.2 [VARIABLES]: Setup leads and tracking
   let allLeads: Lead[] = [...existingLeads]
   const seenCompanies = new Set(existingLeads.map(lead => `${lead.company}-${lead.address}`.toLowerCase().trim()))
   const triedSDKs = new Map(cities.map(city => [city, new Set<string>()]))
   const permanentFailures = new Set<string>()
   let attempt = 0
 
+  // ------ 2. Main scraping loop ------ //
   while (allLeads.length < targetLimit && attempt < MAX_RETRIES) {
     attempt++
-    const remaining = targetLimit - allLeads.length
+    const stillNeed = targetLimit - allLeads.length
+
+    // 2.1 [SDK_CHECK]: Verify SDK availability
     const { available, status, sdkLimits } = await checkSDKAvailability(this.supabaseAdmin)
     const availableSDKs = Object.keys(sdks).filter(sdk => available.includes(sdk))
 
-    logs += `\n🔁 Attempt ${attempt}/${MAX_RETRIES} - still need ${remaining}\n${status}\n📦 SDKs ready to go: ${availableSDKs.join(", ")}\n`
-    logsCallback(logs)
-
     if (!availableSDKs.length) {
-      logs += "❌ All SDKs on cooldown - halting run\n"
+      logs += "😴 all SDKs taking a breather - wrapping up\n"
       logsCallback(logs)
       break
     }
 
+    // 2.2 [CITY_FILTER]: Filter active cities
     const activeCities = cities.filter(city => !permanentFailures.has(city))
     if (!activeCities.length) {
-      logs += "📭 Every city already done - nothing left to scrape\n"
+      logs += "🏁 every city is done - mission complete!\n"
       logsCallback(logs)
       break
     }
 
-    const cityAssignments = this.createCitySDKAssignments(activeCities, availableSDKs, sdkLimits, remaining, triedSDKs)
-    logs += "🧠 Assignments this round:\n" + Object.entries(cityAssignments).map(([sdk, { cities }]) => `   ${sdk}: ${cities.length} cities`).join("\n") + "\n"
-    logsCallback(logs)
+    // 2.3 [CITY_ASSIGNMENT]: Assign cities to SDKs
+    const cityAssignments = this.createCitySDKAssignments(activeCities, availableSDKs, sdkLimits, stillNeed, triedSDKs)
 
+    // 2.4 [PROCESS_SDKS]: Process each available SDK
     const rateLimitedCities: string[] = []
     const timeoutCities: string[] = []
+    const citiesToRedistribute: string[] = []
     let totalNewLeads = 0
+    let chainMessage = ""
 
-    for (const [sdkName, { cities: assignedCities, leadsPerCity }] of Object.entries(cityAssignments)) {
+    for (const sdkName of availableSDKs) {
       if (allLeads.length >= targetLimit) break
+      const { cities: assignedCities, leadsPerCity } = cityAssignments[sdkName] || { cities: [], leadsPerCity: 0 }
+      if (!assignedCities.length) continue
+
       const sdk = sdks[sdkName]
       if (!sdk?.searchBusinesses) {
-        logs += `⚠️ ${sdkName} ain't ready - skipping\n`
+        logs += `${this.SDK_EMOJIS[sdkName]} [${sdkName}]: !sdk?.searchBusinesses - redistributing cities\n`
+        citiesToRedistribute.push(...assignedCities)
+        logsCallback(logs)
         continue
       }
 
-      const emoji = this.SDK_EMOJIS[sdkName] || '🤖'
-      logs += `\n${emoji} ${sdkName} taking over ${assignedCities.length} cities...\n   [${assignedCities.slice(0, 5).join(", ")}
-      ${assignedCities.length > 5 ? ", ..." : ""}]\n`
+      try {
+        const summary = await this.searchBusinessesUsingSDK(
+          sdk, sdkName, keyword, assignedCities, leadsPerCity, seenCompanies,
+          progressCallback, logsCallback, triedSDKs
+        )
 
-      const summary = await this.processCitiesForSDK(
-        sdk, sdkName, keyword, assignedCities, leadsPerCity, seenCompanies,
-        progressCallback, logsCallback, triedSDKs
-      )
+        allLeads.push(...summary.leads)
+        totalNewLeads += summary.leads.length
 
-      allLeads.push(...summary.leads)
-      totalNewLeads += summary.leads.length
+        // Collect failed cities for redistribution
+        rateLimitedCities.push(...summary.retriableCities.filter(city =>
+          triedSDKs.get(city)?.has(sdkName) && !permanentFailures.has(city)
+        ))
+        timeoutCities.push(...summary.failedCities.filter(city =>
+          !summary.retriableCities.includes(city) && !permanentFailures.has(city)
+        ))
 
-      if (summary.leads.length)
-        logs += `   ✅ ${sdkName} dropped ${summary.leads.length} fresh leads 💰\n`
+        summary.permanentFailures.forEach(city => permanentFailures.add(city))
 
-      rateLimitedCities.push(...summary.retriableCities.filter(city =>
-        triedSDKs.get(city)?.has(sdkName) && !permanentFailures.has(city)
-      ))
-      timeoutCities.push(...summary.failedCities.filter(city =>
-        !summary.retriableCities.includes(city) && !permanentFailures.has(city)
-      ))
+        // Update usage tracking
+        if (summary.totalUsed > 0) {
+          await this.updateDBSDKFreeTier({ sdkName, usedCount: summary.totalUsed, increment: true })
+        }
 
-      summary.permanentFailures.forEach(city => permanentFailures.add(city))
-
-      logs += `   📊 Summary: ${summary.leads.length} leads | ${summary.permanentFailures.length} no-show cities | ${summary.retriableCities.length}
-       retry needed\n`
-
-      if (summary.totalUsed > 0) {
-        await this.updateDBSDKFreeTier({ sdkName, usedCount: summary.totalUsed, increment: true })
+        // Check if we should chain to next job
+        if (allLeads.length < targetLimit) {
+          const remaining = targetLimit - allLeads.length
+          chainMessage = `   I found ${allLeads.length} leads 🔥 – let my job2 take care of the rest of ${remaining} leads for ya 😎\n`
+        }
+      } catch (error: any) {
+        logs += `${this.SDK_EMOJIS[sdkName]} [${sdkName}]: Error processing cities: ${error.message}\n`
+        citiesToRedistribute.push(...assignedCities)
+        logsCallback(logs)
       }
     }
 
-    const retriableCities = [...new Set([...rateLimitedCities, ...timeoutCities])]
-    if (retriableCities.length && allLeads.length < targetLimit) {
-      logs += `\n🔄 Retrying ${retriableCities.length} missed cities 🔁\n`
-      logs += `   Rate limited: ${rateLimitedCities.length}, Timeouts: ${timeoutCities.length}\n`
+    // 2.5 [CHAIN_MESSAGE]: Log chaining if needed
+    if (chainMessage) {
+      logs += chainMessage
       logsCallback(logs)
-
-      const redistributedLeads = await this.redistributeFailedCities(
-        retriableCities, keyword, availableSDKs, sdks, sdkLimits,
-        Math.ceil(remaining / retriableCities.length),
-        seenCompanies, progressCallback, logsCallback, triedSDKs, permanentFailures
-      )
-      allLeads.push(...redistributedLeads)
     }
 
+    // 2.6 [REDISTRIBUTE]: Handle redistribution of failed or invalid SDK cities
+    const retriableCities = [...new Set([...rateLimitedCities, ...timeoutCities, ...citiesToRedistribute])]
+    if (retriableCities.length && allLeads.length < targetLimit) {
+      try {
+        const redistributedLeads = await this.redistributeFailedCities(
+          retriableCities, keyword, availableSDKs, sdks, sdkLimits,
+          Math.ceil(stillNeed / retriableCities.length),
+          seenCompanies, progressCallback, logsCallback, triedSDKs, permanentFailures
+        )
+        allLeads.push(...redistributedLeads)
+      } catch (error: any) {
+        logs += `❌ Redistribution failed: ${error.message}\n`
+        logsCallback(logs)
+      }
+    }
+
+    // 2.7 [CHECK_PROGRESS]: Break if no new leads
     if (totalNewLeads === 0) {
-      logs += `⚠️ No new leads this round - wrapping up early\n`
+      logs += `🤷‍♂️ no new leads this round – calling it here\n`
       logsCallback(logs)
       break
     }
 
+    // 2.8 [DELAY]: Wait before next attempt
     if (attempt < MAX_RETRIES) await new Promise(resolve => setTimeout(resolve, 3000))
   }
 
-  logs += `\n🔥 Scraping done! Got ${allLeads.length}/${targetLimit} leads after ${attempt} rounds\n`
-  if (permanentFailures.size > 0)
-    logs += `📌 Cities with no biz found: ${Array.from(permanentFailures).join(", ")}\n`
+  // ------ 3. Finalize and return ------ //
+  // 3.1 [COMPLETION_MESSAGE]: Log final status
+  const finalCount = Math.min(allLeads.length, targetLimit)
+  const completionRatio = finalCount / targetLimit
+  
+  if (completionRatio >= 0.9) {
+    logs += `\n✅ done bro! 🔥 total leads scraped: ${finalCount} / ${targetLimit}\n`
+  } else if (completionRatio >= 0.7) {
+    logs += `\n🧪 retrying 1 last batch for the final ${targetLimit - finalCount} – just to top it off 🏁\n`
+  } else {
+    logs += `\n⚠️ wrapped up with ${finalCount} / ${targetLimit} leads – location might be tapped out 🤔\n`
+  }
+  
   logsCallback(logs)
-
   return allLeads.slice(0, targetLimit)
 }
 
@@ -539,8 +665,8 @@ public async scrapeLeads(
 }
 
 /** Processes cities for an SDK with rate limiting */
-private async processCitiesForSDK(
-  sdk: any,
+private async searchBusinessesUsingSDK(
+  sdk: BusinessSDK, // Updated type from any to BusinessSDK
   sdkName: string,
   keyword: string,
   cities: string[],
@@ -550,115 +676,97 @@ private async processCitiesForSDK(
   logsCallback: (logs: string) => void,
   triedSDKs: Map<string, Set<string>>
 ): Promise<SDKProcessingSummary> {
-  // ------ 1. Initialize processing state ------ //
-  const results: Lead[] = []
-  const failedCities: string[] = []
-  const retriableCities: string[] = []
-  const permanentFailures: string[] = []
-  let totalUsed = 0
-  
-  // 1.1 [RATE_LIMITING]: SDK-specific delays
+  const results: Lead[] = [];
+  const failedCities: string[] = [];
+  const retriableCities: string[] = [];
+  const permanentFailures: string[] = [];
+  let totalUsed = 0;
+  const startTime = Date.now();
+
+  const personality = this.SDK_PERSONALITIES[sdkName] || {
+    emoji: '🤖',
+    name: sdkName,
+    greeting: (cities) => `🤖 ${sdkName}: processing ${cities.length} cities:`,
+    cityList: (cities) => `   [${cities.slice(0, 4).join(', ')}${cities.length > 4 ? ', ...]' : ']'}`,
+    success: (count) => `   found ${count} leads`,
+    failure: `   encountered some issues`,
+  };
+
+  logsCallback(`${personality.emoji} ${sdkName}: Starting with ${cities.length} cities: ${cities.slice(0, 3).join(', ')}...\n`);
+
   const delay = { 
     hunterSDK: 2000, 
     foursquareSDK: 500, 
     googleCustomSearchSDK: 1000, 
-    tomtomSDK: 400 
-  }[sdkName] || 1000
+    tomtomSDK: 400,
+    rapidSDK: 300,
+  }[sdkName] || 1000;
 
-  // ------ 2. Process each city with enhanced error handling ------ //
   for (let i = 0; i < cities.length; i++) {
-    const city = cities[i]
-    
-    // 2.1 [TRACKING]: Mark SDK as tried for this city
-    if (!triedSDKs.has(city)) triedSDKs.set(city, new Set<string>())
-    triedSDKs.get(city)!.add(sdkName)
-    
-    logsCallback(`   🏙️ ${sdkName}: Scraping "${keyword}" in ${city} (${i + 1}/${cities.length})\n`)
-    
+    const city = cities[i];
+    logsCallback(`${personality.emoji} ${sdkName}: Processing ${city}\n`);
+
+    if (!triedSDKs.has(city)) triedSDKs.set(city, new Set());
+    triedSDKs.get(city)!.add(sdkName);
+
     try {
-      // 2.2 [API_CALL]: Make the actual API request
-      const businesses = await sdk.searchBusinesses(keyword, city, leadsPerCity)
-      
-      // 2.3 [VALIDATION]: Handle string errors from SDK
-      if (typeof businesses === "string") {
-        throw new Error(businesses)
-      }
-      
-      // 2.4 [NO_RESULTS]: Handle empty results (not an error, but important to track)
+      const businesses = await this.withTimeout(
+        sdk.searchBusinesses(keyword, city, leadsPerCity),
+        30000, // 30s timeout
+        `Timeout after 30s for ${sdkName} in ${city}`
+      );
+
+      if (typeof businesses === "string") throw new Error(businesses);
       if (!businesses || businesses.length === 0) {
-        permanentFailures.push(city)
-        logsCallback(`   🚫 ${city}: No businesses found for "${keyword}"\n`)
-        continue
+        permanentFailures.push(city);
+        logsCallback(`${personality.emoji} ${sdkName}: No leads in ${city}\n`);
+        continue;
       }
-      
-      // 2.5 [DEDUPLICATION]: Filter and deduplicate leads
+
       const filteredLeads = businesses.filter((lead: Lead) => {
-        const key = `${lead.company}-${lead.address}`.toLowerCase().trim()
-        if (seenCompanies.has(key)) return false
-        seenCompanies.add(key)
-        return true
-      })
-      
-      // 2.6 [EMAIL_ENRICHMENT]: Scrape emails from websites if missing
+        const key = `${lead.company}-${lead.address}`.toLowerCase().trim();
+        if (seenCompanies.has(key)) return false;
+        seenCompanies.add(key);
+        return true;
+      });
+
       const enrichedLeads = await Promise.all(
         filteredLeads.map(async (lead: Lead) => {
           if (!lead.email && lead.website) {
             try {
-              const { email } = await scrapeContactsFromWebsite(lead.website)
-              if (email) lead.email = email
-            } catch (enrichmentError) {
-              // Email enrichment failure is not critical, continue with lead
-              logsCallback(`   ⚠️ ${city}: Email enrichment failed for ${lead.company}\n`)
-            }
+              const { email } = await scrapeContactsFromWebsite(lead.website);
+              if (email) lead.email = email;
+            } catch {}
           }
-          return lead
+          return lead;
         })
-      )
-      
-      // 2.7 [SUCCESS]: Record successful results
-      results.push(...enrichedLeads)
-      totalUsed += businesses.length
-      progressCallback(enrichedLeads.length)
-      logsCallback(`   ✅ ${city}: ${enrichedLeads.length} new leads\n`)
+      );
+
+      results.push(...enrichedLeads);
+      totalUsed += businesses.length;
+      progressCallback(enrichedLeads.length);
+      logsCallback(`${personality.emoji} ${sdkName}: Found ${enrichedLeads.length} leads in ${city}\n`);
 
     } catch (error: any) {
-      // 2.8 [ERROR_HANDLING]: Categorize and handle errors
-      const scrapingError = this.categorizeError(error, city, sdkName)
-      
-      // 2.9 [ERROR_ROUTING]: Route error based on type
+      const scrapingError = this.categorizeError(error, city, sdkName);
+      logsCallback(`${personality.emoji} ${sdkName}: Error in ${city} - ${scrapingError.type}: ${scrapingError.message}\n`);
+
       switch (scrapingError.type) {
-        case 'NOT_FOUND':
-          permanentFailures.push(city)
-          logsCallback(`   🚫 ${city}: ${scrapingError.message}\n`)
-          break
-        case 'RATE_LIMITED':
-          if (scrapingError.retryable) retriableCities.push(city)
-          logsCallback(`   ⏳ ${city}: ${scrapingError.message}\n`)
-          break
+        case 'NOT_FOUND': permanentFailures.push(city); break;
+        case 'RATE_LIMITED': if (scrapingError.retryable) retriableCities.push(city); break;
         case 'TIMEOUT':
-        case 'API_ERROR':
-          if (scrapingError.retryable) failedCities.push(city)
-          logsCallback(`   ❌ ${city}: ${scrapingError.message}\n`)
-          break
-        default:
-          failedCities.push(city)
-          logsCallback(`   ❓ ${city}: ${scrapingError.message}\n`)
+        case 'API_ERROR': if (scrapingError.retryable) failedCities.push(city); break;
+        default: failedCities.push(city);
       }
     }
 
-    // 2.10 [RATE_LIMITING]: Delay between requests
-    if (i < cities.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, delay))
-    }
+    if (i < cities.length - 1) await new Promise(resolve => setTimeout(resolve, delay));
   }
 
-  return {
-    leads: results,
-    failedCities,
-    retriableCities,
-    permanentFailures,
-    totalUsed
-  }
+  const elapsedSeconds = Math.round((Date.now() - startTime) / 1000);
+  logsCallback(`${personality.emoji} ${sdkName}: Finished - ${results.length} leads found in ${elapsedSeconds}s\n`);
+
+  return { leads: results, failedCities, retriableCities, permanentFailures, totalUsed };
 }
 
 
@@ -713,8 +821,7 @@ public calculateEstimatedCompletion = (startTime: number, currentCount: number, 
 
  /** Redistributes failed cities to other SDKs */
  /** Enhanced redistribution with failure tracking and smart SDK selection */
- // too much - create interface for it (send it in separated file)
-private async redistributeFailedCities(
+ private async redistributeFailedCities(
   failedCities: string[],
   keyword: string,
   availableSDKs: string[],
@@ -727,32 +834,45 @@ private async redistributeFailedCities(
   triedSDKs: Map<string, Set<string>>,
   permanentFailures: Set<string>
 ): Promise<Lead[]> {
-  // ------ 1. Initialize redistribution state ------ //
   const redistributedLeads: Lead[] = []
   
-  // 1.1 [FILTERING]: Remove permanently failed cities
+  // Filter out permanently failed cities
   const retriableCities = failedCities.filter(city => !permanentFailures.has(city))
   
   if (!retriableCities.length) {
-    logsCallback("   🚫 No cities available for redistribution\n")
     return redistributedLeads
   }
 
-  // ------ 2. Smart SDK redistribution ------ //
+  // Group cities by their failed SDK for handoff messaging
+  const failedBySDK: Record<string, string[]> = {}
+  retriableCities.forEach(city => {
+    const lastTriedSDK = Array.from(triedSDKs.get(city) || []).pop()
+    if (lastTriedSDK) {
+      if (!failedBySDK[lastTriedSDK]) failedBySDK[lastTriedSDK] = []
+      failedBySDK[lastTriedSDK].push(city)
+    }
+  })
+
+  // Show handoff messages
+  for (const [failedSDK, cities] of Object.entries(failedBySDK)) {
+    const personality = this.SDK_PERSONALITIES[failedSDK as keyof typeof this.SDK_PERSONALITIES]
+    if (personality?.handoff) {
+      logsCallback(`${personality.handoff(cities)}\n`)
+    }
+    
+  }
+
+  // Process redistribution
   for (const city of retriableCities) {
-    // 2.1 [SDK_SELECTION]: Find untried SDKs for this city
     const triedSDKsForCity = triedSDKs.get(city) || new Set()
     const untriedSDKs = availableSDKs.filter(sdk => 
       !triedSDKsForCity.has(sdk) && 
       sdkLimits[sdk]?.available > 0
     )
     
-    if (!untriedSDKs.length) {
-      logsCallback(`   ⚠️ ${city}: All available SDKs exhausted\n`)
-      continue
-    }
+    if (!untriedSDKs.length) continue
 
-    // 2.2 [OPTIMAL_SDK]: Select SDK with highest availability
+    // Select best available SDK
     const selectedSDK = untriedSDKs.reduce((best, current) => 
       (sdkLimits[current]?.available || 0) > (sdkLimits[best]?.available || 0) ? current : best
     )
@@ -760,25 +880,29 @@ private async redistributeFailedCities(
     const sdk = sdks[selectedSDK]
     if (!sdk?.searchBusinesses) continue
 
-    // 2.3 [ATTEMPT_TRACKING]: Mark this SDK as tried
+    // Mark as tried
     triedSDKsForCity.add(selectedSDK)
     
+    // Show acceptance message for new SDK - NOW THIS WILL WORK
+    const SDK_PERSONALITIES = this.SDK_PERSONALITIES
+    const newPersonality = SDK_PERSONALITIES[selectedSDK as keyof typeof SDK_PERSONALITIES]
+    if (newPersonality?.acceptance && Math.random() < 0.3) { // 30% chance to show acceptance
+      logsCallback(`${newPersonality.acceptance}\n`)
+    }
+    
     try {
-      // 2.4 [API_CALL]: Attempt redistribution with selected SDK
       const businesses = await sdk.searchBusinesses(keyword, city, leadsPerCity)
       
       if (typeof businesses === "string") {
         throw new Error(businesses)
       }
 
-      // 2.5 [NO_RESULTS_CHECK]: Handle empty results
       if (!businesses || businesses.length === 0) {
         permanentFailures.add(city)
-        logsCallback(`   🚫 ${city}: Confirmed no businesses (${selectedSDK})\n`)
         continue
       }
 
-      // 2.6 [DEDUPLICATION]: Process and deduplicate leads
+      // Process leads (same deduplication logic)
       const filteredLeads = businesses.filter((lead: Lead) => {
         const key = `${lead.company}-${lead.address}`.toLowerCase().trim()
         if (seenCompanies.has(key)) return false
@@ -786,7 +910,7 @@ private async redistributeFailedCities(
         return true
       })
 
-      // 2.7 [EMAIL_ENRICHMENT]: Enrich leads with email data
+      // Email enrichment
       const enrichedLeads = await Promise.all(
         filteredLeads.map(async (lead: Lead) => {
           if (!lead.email && lead.website) {
@@ -794,34 +918,28 @@ private async redistributeFailedCities(
               const { email } = await scrapeContactsFromWebsite(lead.website)
               if (email) lead.email = email
             } catch {
-              // Continue without email if enrichment fails
+              // Continue without email
             }
           }
           return lead
         })
       )
 
-      // 2.8 [SUCCESS]: Record successful redistribution
       redistributedLeads.push(...enrichedLeads)
       progressCallback(enrichedLeads.length)
-      logsCallback(`   ✅ ${city}: Redistributed to ${selectedSDK}, found ${enrichedLeads.length} leads\n`)
       
-      // 2.9 [USAGE_UPDATE]: Update SDK usage tracking
+      // Update usage
       await this.updateDBSDKFreeTier({ sdkName: selectedSDK, usedCount: 1, increment: true })
 
     } catch (error: any) {
-      // 2.10 [ERROR_HANDLING]: Handle redistribution errors
       const scrapingError = this.categorizeError(error, city, selectedSDK)
       
       if (scrapingError.type === 'NOT_FOUND') {
         permanentFailures.add(city)
-        logsCallback(`   🚫 ${city}: Confirmed no businesses (${selectedSDK})\n`)
-      } else {
-        logsCallback(`   ❌ ${city}: Redistribution failed (${selectedSDK}) - ${scrapingError.message}\n`)
       }
     }
 
-    // 2.11 [RATE_LIMITING]: Delay between redistribution attempts
+    // Rate limiting
     await new Promise(resolve => setTimeout(resolve, 200))
   }
 
@@ -857,8 +975,8 @@ private categorizeError(error: any, city: string, sdkName: string): ScrapingErro
       sdkName,
       statusCode,
       retryable: true
-    }
   }
+}
 
   // 1.3 [5XX_SERVER_ERROR]: Server-side issues
   if (statusCode >= 500 && statusCode < 600) {
@@ -1026,5 +1144,16 @@ public invokeChildLambda = async (payload: JobPayload): Promise<{ success: boole
     return { success: false, cities: payload.cities || [], error: (error as Error).message }
   }
 }
+
+private async withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  errorMessage: string
+): Promise<T> {
+  const timeout = new Promise<T>((_, reject) =>
+    setTimeout(() => reject(new Error(errorMessage)), timeoutMs)
+  );
+  return Promise.race([promise, timeout]);
 }
 
+}
