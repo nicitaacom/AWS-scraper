@@ -163,8 +163,8 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
     }
 
     // ------ 3. SDK Availability Check ------ //
-    const { available: availableSDKs, status: sdkStatus } = await checkSDKAvailability(supabase)
-    if (availableSDKs.length === 0) {
+    const { availableSDKNames, status: sdkStatus } = await checkSDKAvailability(supabase)
+    if (availableSDKNames.length === 0) {
       executionLogs += `❌ All SDKs exhausted: ${sdkStatus}\n`
       await scraper.updateDBScraper(id, { status: "error", message: executionLogs })
       await pusher.trigger(channelId, "scraper:error", { id, message: "All SDK limits reached. Please try again later.", })
