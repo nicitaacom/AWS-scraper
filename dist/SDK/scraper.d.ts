@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import Pusher from "pusher";
 import { SupabaseClient } from "@supabase/supabase-js";
-import { DBUpdate, JobPayload, Lead } from "../interfaces/interfaces";
+import { DBUpdate, JobPayload, Lead, SDKUsageUpdate } from "../interfaces/interfaces";
 import { S3Client } from "@aws-sdk/client-s3";
 import { LambdaClient } from "@aws-sdk/client-lambda";
 interface SDKs {
@@ -14,6 +14,16 @@ interface SDKs {
     tomtomSDK: string;
     [index: string]: string;
 }
+interface SDKPersonality {
+    emoji: string;
+    name: string;
+    greeting: (cities: string[]) => string;
+    cityList: (cities: string[]) => string;
+    success: (count: number) => string;
+    handoff: (cities: string[]) => string;
+    failure: string;
+    acceptance?: string;
+}
 export declare class Scraper {
     private openai;
     private s3;
@@ -22,7 +32,8 @@ export declare class Scraper {
     protected lambda: LambdaClient;
     protected AWS_LAMBDA_FUNCTION_NAME: string;
     protected SDK_EMOJIS: SDKs;
-    constructor(openai: OpenAI, s3: S3Client, pusher: Pusher, supabaseAdmin: SupabaseClient<any, "public", any>, lambda: LambdaClient, AWS_LAMBDA_FUNCTION_NAME?: string, SDK_EMOJIS?: SDKs);
+    private readonly SDK_PERSONALITIES;
+    constructor(openai: OpenAI, s3: S3Client, pusher: Pusher, supabaseAdmin: SupabaseClient<any, "public", any>, lambda: LambdaClient, AWS_LAMBDA_FUNCTION_NAME?: string, SDK_EMOJIS?: SDKs, SDK_PERSONALITIES?: Record<string, SDKPersonality>);
     /**
    * Validates input payload with detailed error messages
    */
@@ -80,16 +91,13 @@ export declare class Scraper {
     /**
      * Updates SDK free tier usage with comprehensive error handling
      */
-    updateDBSDKFreeTier: ({ sdkName, usedCount, increment }: {
-        sdkName: string;
-        usedCount: number;
-        increment?: boolean;
-    }) => Promise<void>;
+    updateDBSDKFreeTier: ({ sdkName, usedCount, increment }: SDKUsageUpdate) => Promise<void>;
     invokeChildLambda: (payload: JobPayload) => Promise<{
         success: boolean;
         cities: string[];
         error?: string;
     }>;
+    private withTimeout;
 }
 export {};
 //# sourceMappingURL=scraper.d.ts.map

@@ -15,8 +15,6 @@ import { checkSDKAvailability } from "./utils/checkSDKAvailability"
 // ------ Constants ------ //
 export const BUCKET = process.env.S3_BUCKET || "scraper-files-eu-central-1"
 export const MAX_RUNTIME_MS = 13 * 60 * 1000 // export it to use in Scraper because somtimes it get stuck
-const LEADS_PER_MINUTE = 80 / 3
-const MAX_LEADS_PER_JOB = Math.floor((MAX_RUNTIME_MS / 60000) * LEADS_PER_MINUTE) // 346
 const PROGRESS_UPDATE_INTERVAL = 10000
 export const MAX_RETRIES = 3
 // const MAX_JOBS_ALLOWED = 1509 (uncomment when ready to go prod - (for AI - don't delte this line))
@@ -108,6 +106,21 @@ const getJobChainPosition = async (id: string): Promise<{ position: number; tota
   }
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // ------ Initialize Clients ------ //
 const init = initializeClients()
 if (typeof init === "string") throw Error(init)
@@ -130,7 +143,7 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
       return { statusCode: 400, body: JSON.stringify({ error: `Input validation failed: ${validation.error}`, received: event }) }
     }
 
-    if (IS_DEBUGGING) executionLogs += `[debug] Lambda execution started with payload: ${JSON.stringify(event, null, 2)}\n`
+   
     
     const { keyword, location, channelId, id, limit, cities, retryCount = 0, isReverse, jobNumber = 1 } = event
     const { position, totalJobs } = await getJobChainPosition(id)
@@ -158,8 +171,7 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
       return { statusCode: 429, body: JSON.stringify({ error: "All SDK limits reached" }) }
     }
 
-    if (IS_DEBUGGING) executionLogs += `[debug] Available SDKs: ${availableSDKs.join(', ')}\n`
-
+   
     // ------ 4. Load Existing Leads (for retries/chaining) ------ //
     let existingLeads: Lead[] = []
     if (retryCount > 0 || jobNumber > 1) {
@@ -201,7 +213,7 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
       citiesToScrape = generatedCities
       executionLogs += `✅ Generated ${citiesToScrape.length} cities (${openaiTime}s): ${citiesToScrape.slice(0, 3).join(', ')}${citiesToScrape.length > 3 ? `... (+${citiesToScrape.length - 3} more)` : ''}\n`
       
-      if (IS_DEBUGGING) executionLogs += `[debug] Full cities list: ${citiesToScrape.join(', ')}\n`
+      
     }
 
     // ------ 6. Start Progress Updates ------ //
@@ -210,7 +222,7 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
 
     // ------ 7. Scrape Leads ------ //
     executionLogs += `🔍 Job${jobNumber} - Starting lead scraping for ${citiesToScrape.length} cities...\n`
-    const targetForThisJob = Math.min(limit - existingLeads.length, MAX_LEADS_PER_JOB)
+    const targetForThisJob = limit - existingLeads.length
     
     if (IS_DEBUGGING) executionLogs += `[debug] Target for this job: ${targetForThisJob}, Cities to process: ${citiesToScrape.slice(0, 5).join(', ')}\n`
     
@@ -245,7 +257,7 @@ export const handler = async (event: JobPayload): Promise<{ statusCode: number; 
     const foundRatio = leads.length / limit
 
     // ------ 9. Handle Retries (same job) ------ //
-    const shouldRetry = foundRatio < 0.8 && retryCount < MAX_RETRIES && remainingLeads > 0 && remainingLeads <= MAX_LEADS_PER_JOB && newLeadsFound > 0
+    const shouldRetry = foundRatio < 0.8 && retryCount < MAX_RETRIES && remainingLeads > 0 && newLeadsFound > 0
     if (shouldRetry) {
       executionLogs += `🔄 Insufficient leads (${Math.round(foundRatio * 100)}%) - retrying Job${jobNumber} (${retryCount + 1}/${MAX_RETRIES})\n`
       

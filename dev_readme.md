@@ -34,7 +34,7 @@ You're building a lead scraper Lambda function.
 
 **Response behavior**:
 - Return early with status `202` if task has been continued in next job (add payload in executionLogs for each job task)
-- Log errors in order to debug it - include emojies in error and use this.SDK_EMOJIS[sdkName] (e.g [📊SerpSDK]: some logs)
+- Log errors in order to debug it DO NOT add debug logs if I not asked - include emojies in error and use this.SDK_EMOJIS[sdkName] (e.g [📊SerpSDK]: some logs)
 - Use casual style in executionLogs
   For example:
   ```
@@ -272,17 +272,29 @@ Data:
 ```
 Note: it's only 3 statuses "completed" "pending" "error" - so use only these
 
+
+### index.ts - what going on there?
+Main Functions in index.ts
+handler(event: JobPayload) - Main Entry Point
+
+Validates input payload and free-tier limits
+Loads existing leads from previous jobs/retries
+Generates cities using OpenAI if not provided
+Scrapes leads using available SDKs (up to MAX_LEADS_PER_JOB)
+Handles retries (same job) vs chaining (new job)
+Uploads CSV to S3 and triggers Pusher events
+
+
+What functions do you need to see to solve current issues (tasks)?
+now reply only with functions that you need - no explanations or code is required yet
+
 Here is all interfaces and types
 ```ts
 [PASTE FROM interfaces.ts]
 ```
 
-Here is index.ts
-[PASTE]
-
-
-**Output**: Optimized, readable, production-grade Lambda handler with JSDoc for handler function that explains what it does
-
+Current issues:
+ 1. 
 
 
 
