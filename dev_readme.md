@@ -355,48 +355,7 @@ docs on how to create SDK:
 ``` 
 4. create a file e.g RapidSDK.ts
 
-Recent logs:
+Recent logs: all logs has been deleted for some reason after 16 minutes
 ```
-⏱️ Progress: 5 leads found in 1m 00s
-🏙️ Processing 1 cities: Hamburg
-🎯 Target: 17 leads per city (17 total)
 
-🔍 ATTEMPT 1 - City: Hamburg --------------------
-SDK Status: ✅ Available: openCorporatesSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, tomtomSDK, duckduckGoSDK, apifyContactInfoSDK, scrapingBeeSDK | ❌ Unavailable: searchSDK (106/100), serpSDK (105/100)
-🎯 Need 17 more leads (0/17)
-🏙️ Scraping "it company" in Hamburg
-🚀 Using 8 SDKs (3+2+2+2(16 max)+2+2+2+2=17): duckduckGoSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, openCorporatesSDK, tomtomSDK, apifyContactInfoSDK, scrapingBeeSDK
-🔍 duckduckGoSDK: fetching 3 leads in Hamburg...
-✅ duckduckGoSDK: got 0 leads
-🔍 foursquareSDK: fetching 2 leads in Hamburg...
-✅ foursquareSDK: got 2 leads
-🔍 googleCustomSearchSDK: fetching 2 leads in Hamburg...
-✅ googleCustomSearchSDK: got 1 leads
-🔍 hunterSDK: fetching 2 leads in Hamburg...
-✅ hunterSDK: got 0 leads
-🔍 openCorporatesSDK: fetching 2 leads in Hamburg...
-❌ openCorporatesSDK error: OpenCorporates search failed: OpenCorporates API error: [object Object]
-🔍 tomtomSDK: fetching 2 leads in Hamburg...
-✅ tomtomSDK: got 2 leads
-🔍 apifyContactInfoSDK: fetching 2 leads in Hamburg...
-❌ apifyContactInfoSDK error: URLs array is required
-🔍 scrapingBeeSDK: fetching 2 leads in Hamburg...
-❌ scrapingBeeSDK error: Error: ScrapingBee API error: 400
-
-🔍 ATTEMPT 2 - City: Hamburg --------------------
-SDK Status: ✅ Available: openCorporatesSDK, duckduckGoSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, tomtomSDK, apifyContactInfoSDK, scrapingBeeSDK | ❌ Unavailable: searchSDK (106/100), serpSDK (105/100)
-🎯 Need 12 more leads (5/17)
-🏙️ Scraping "it company" in Hamburg
-🚀 Using 8 SDKs (5+1+1+1(16 max)+1+1+1+1=12): duckduckGoSDK, foursquareSDK, googleCustomSearchSDK, hunterSDK, openCorporatesSDK, tomtomSDK, apifyContactInfoSDK, scrapingBeeSDK
-🔍 duckduckGoSDK: fetching 5 leads in Hamburg...
-✅ duckduckGoSDK: got 0 leads
-🔍 foursquareSDK: fetching 1 leads in Hamburg...
-✅ foursquareSDK: got 0 leads
-🔍 googleCustomSearchSDK: fetching 1 leads in Hamburg...
-✅ googleCustomSearchSDK: got 0 leads
-🔍 hunterSDK: fetching 1 leads in Hamburg...
-✅ hunterSDK: got 0 leads
-🔍 openCorporatesSDK: fetching 1 leads in Hamburg...
-❌ openCorporatesSDK error: OpenCorporates search failed: OpenCorporates API error: [object Object]
-🔍 tomtomSDK: fetching 1 leads in Hamburg...
 ```
