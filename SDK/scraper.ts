@@ -6,7 +6,6 @@ import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } fro
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { checkSDKAvailability } from "../utils/checkSDKAvailability";
-import { MAX_RETRIES } from "..";
 import { scrapeContactsFromWebsite } from "../utils/scrapeContactsFromWebsite";
 
 interface SDKs {
@@ -80,7 +79,7 @@ export class Scraper {
         name: 'googleCustomSearchSDK',
         greeting: (cities: string[]) => `🌐 googleCustomSearchSDK: is up! gonna blast through ${cities.length} cities:`,
         cityList: (cities: string[]) => `   [${cities.slice(0, 4).join(', ')}${cities.length > 4 ? `, …]` : ']'}`,
-        success: (count: number) => `   I found ${count} leads – giving it all I got 💪`,
+        success: (count: number) => `   I found ${count} leads - giving it all I got 💪`,
         handoff: (cities: string[]) => `**hunterSDK**, need backup on these cities! - running into some limits 🚧`,
         acceptance: `ofc bro! np - I'll take care of all this for ya`,
         failure: `   some technical difficulties 🔧`
@@ -475,6 +474,7 @@ public updateDBScraper = async (id:string,data:DBUpdate): Promise<void> => {
 
 
 /** Scrapes leads with retry and SDK redistribution logic */
+
 public async scrapeLeads(
   keyword: string,
   cities: string[],
@@ -486,9 +486,9 @@ public async scrapeLeads(
 ): Promise<Lead[]> {
   // ------ 1. Initialize variables and setup ------ //
   const remaining = targetLimit - existingLeads.length
-  let logs = `🎯 job1 – ok I'm running to scrape ${targetLimit} leads for you\n`
+  let logs = `🎯 job1 - ok I'm running to scrape ${targetLimit} leads for you\n`
   if (existingLeads.length > 0) {
-    logs += `📊 already got ${existingLeads.length} bangers – hunting for ${remaining} more 🔥\n`
+    logs += `📊 already got ${existingLeads.length} bangers - hunting for ${remaining} more 🔥\n`
   }
   logsCallback(logs)
 
@@ -525,7 +525,7 @@ public async scrapeLeads(
     const cityAssignments = this.createCitySDKAssignments(activeCities, availableSDKs, sdkCredits, stillNeed, triedSDKs)
 
     // 2.4 [ANNOUNCE_SDK_ASSIGNMENTS]: Show which SDKs will process which cities
-    logs += `\n🚀 Deploying ${availableSDKs.length} SDKs:\n`
+    logs += `\n🚀 Deploying ${availableSDKs.length} SDKs in parallel:\n`
     for (const sdkName of availableSDKs) {
       const { cities: assignedCities, leadsPerCity } = cityAssignments[sdkName] || { cities: [], leadsPerCity: 0 }
       if (assignedCities.length > 0) {
@@ -535,25 +535,16 @@ public async scrapeLeads(
     }
     logsCallback(logs)
 
-    // 2.5 [PROCESS_SDKS]: Process each SDK sequentially but with immediate logging
-    const rateLimitedCities: string[] = []
-    const timeoutCities: string[] = []
-    const citiesToRedistribute: string[] = []
-    let totalNewLeads = 0
-    let chainMessage = ""
-
-    for (const sdkName of availableSDKs) {
-      if (allLeads.length >= targetLimit) break
+    // 2.5 [PROCESS_SDKS_IN_PARALLEL]: Process all SDKs simultaneously
+    const sdkPromises = availableSDKs.map(async (sdkName) => {
       const { cities: assignedCities, leadsPerCity } = cityAssignments[sdkName] || { cities: [], leadsPerCity: 0 }
-      if (!assignedCities.length) continue
+      if (!assignedCities.length) return null
 
       const sdk = sdks[sdkName]
       if (!sdk?.searchBusinesses) {
         const sdkEmoji = this.SDK_EMOJIS[sdkName] || '🤖'
-        logs += `[${sdkEmoji} ${sdkName}]: SDK not available - redistributing ${assignedCities.length} cities\n`
-        citiesToRedistribute.push(...assignedCities)
-        logsCallback(logs)
-        continue
+        logsCallback(`[${sdkEmoji} ${sdkName}]: SDK not available - redistributing ${assignedCities.length} cities\n`, false, `${sdkName}_error`)
+        return { sdkName, citiesToRedistribute: assignedCities, summary: null }
       }
 
       try {
@@ -563,6 +554,29 @@ public async scrapeLeads(
           progressCallback, logsCallback, triedSDKs
         )
 
+        return { sdkName, summary, citiesToRedistribute: [] }
+      } catch (error: any) {
+        const sdkEmoji = this.SDK_EMOJIS[sdkName] || '🤖'
+        logsCallback(`[${sdkEmoji} ${sdkName}]: Error processing cities: ${error.message}\n`, false, `${sdkName}_error`)
+        return { sdkName, citiesToRedistribute: assignedCities, summary: null }
+      }
+    })
+
+    // Wait for all SDKs to complete
+    const sdkResults = await Promise.all(sdkPromises)
+    
+    // 2.6 [COLLECT_RESULTS]: Process results from all SDKs
+    const rateLimitedCities: string[] = []
+    const timeoutCities: string[] = []
+    const citiesToRedistribute: string[] = []
+    let totalNewLeads = 0
+
+    for (const result of sdkResults) {
+      if (!result) continue
+
+      const { sdkName, summary, citiesToRedistribute: failedCities } = result
+      
+      if (summary) {
         allLeads.push(...summary.leads)
         totalNewLeads += summary.leads.length
 
@@ -580,27 +594,21 @@ public async scrapeLeads(
         if (summary.totalUsed > 0) {
           await this.updateDBSDKFreeTier({ sdkName, usedCount: summary.totalUsed, increment: true })
         }
-
-        // Check if we should chain to next job
-        if (allLeads.length < targetLimit) {
-          const remaining = targetLimit - allLeads.length
-          chainMessage = `   I found ${allLeads.length} leads 🔥 – let my job2 take care of the rest of ${remaining} leads for ya 😎\n`
-        }
-      } catch (error: any) {
-        const sdkEmoji = this.SDK_EMOJIS[sdkName] || '🤖'
-        logs += `[${sdkEmoji} ${sdkName}]: Error processing cities: ${error.message}\n`
-        citiesToRedistribute.push(...assignedCities)
-        logsCallback(logs)
+      } else {
+        citiesToRedistribute.push(...failedCities)
       }
     }
 
-    // 2.6 [CHAIN_MESSAGE]: Log chaining if needed
-    if (chainMessage) {
+    // 2.7 [CHAIN_MESSAGE]: Log chaining if needed
+    if (allLeads.length < targetLimit) {
+      const remaining = targetLimit - allLeads.length
+      // TODO update job2 to job${jobIndex} - if need more info ask me about necessery code you need to update 
+      const chainMessage = `   I found ${allLeads.length} leads 🔥 - let my job2 take care of the rest of ${remaining} leads for ya 😎\n`
       logs += chainMessage
       logsCallback(logs)
     }
 
-    // 2.7 [REDISTRIBUTE]: Handle redistribution of failed cities
+    // 2.8 [REDISTRIBUTE]: Handle redistribution of failed cities
     const retriableCities = [...new Set([...rateLimitedCities, ...timeoutCities, ...citiesToRedistribute])]
     if (retriableCities.length && allLeads.length < targetLimit) {
       logs += `\n🔄 Redistributing ${retriableCities.length} cities to other SDKs...\n`
@@ -619,14 +627,14 @@ public async scrapeLeads(
       }
     }
 
-    // 2.8 [CHECK_PROGRESS]: Break if no new leads
+    // 2.9 [CHECK_PROGRESS]: Break if no new leads
     if (totalNewLeads === 0) {
-      logs += `🤷‍♂️ no new leads this round – calling it here\n`
+      logs += `🤷‍♂️ no new leads this round - calling it here\n`
       logsCallback(logs)
       break
     }
 
-    // 2.9 [DELAY]: Wait before next attempt
+    // 2.10 [DELAY]: Wait before next attempt
     if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 3000))
   }
 
@@ -637,9 +645,9 @@ public async scrapeLeads(
   if (completionRatio >= 0.9) {
     logs += `\n✅ done bro! 🔥 total leads scraped: ${finalCount} / ${targetLimit}\n`
   } else if (completionRatio >= 0.7) {
-    logs += `\n🧪 retrying 1 last batch for the final ${targetLimit - finalCount} – just to top it off 🏁\n`
+    logs += `\n🧪 retrying 1 last batch for the final ${targetLimit - finalCount} - just to top it off 🏁\n`
   } else {
-    logs += `\n⚠️ wrapped up with ${finalCount} / ${targetLimit} leads – location might be tapped out 🤔\n`
+    logs += `\n⚠️ wrapped up with ${finalCount} / ${targetLimit} leads - location might be tapped out 🤔\n`
   }
   
   logsCallback(logs)
@@ -773,11 +781,10 @@ private async searchBusinessesUsingSDK(
     rapidSDK: 300,
   }[sdkName] || 1000
 
-  // Initial static progress lines
-  const progressLine1 = `[${sdkEmoji} ${sdkName}]: Progress 0/${sdkLeadLimit} from ${cities.length} cities (target: ${sdkLeadLimit} leads): ${cities.slice(0, 3).join(', ')}...\n`
-  const progressLine2 = `[${sdkEmoji} ${sdkName}]: Processing 0/${cities.length} - Initializing...\n`
-  
-  logsCallback(progressLine1 + progressLine2, false, sdkId)
+  // Initial progress lines - send immediately
+  const line1 = `[${sdkEmoji} ${sdkName}]: Progress 0/${sdkLeadLimit} from ${cities.length} cities (target: ${sdkLeadLimit} leads): ${cities.slice(0, 3).join(', ')}...\n`
+  const line2 = `[${sdkEmoji} ${sdkName}]: Processing 0/${cities.length} - Initializing...\n`
+  logsCallback(line1 + line2, false, sdkId)
 
   // ------ 2. Process each city with smart tracking and timeouts ------ //
   for (let i = 0; i < cities.length; i++) {
@@ -796,9 +803,9 @@ private async searchBusinessesUsingSDK(
     const city = cities[i]
     const cityStartTime = Date.now()
     
-    // Update static progress lines
+    // Update progress lines immediately when starting a city
     const currentLine1 = `[${sdkEmoji} ${sdkName}]: Progress ${results.length}/${sdkLeadLimit} from ${cities.length} cities (target: ${sdkLeadLimit} leads): ${cities.slice(0, 3).join(', ')}...\n`
-    const currentLine2 = `[${sdkEmoji} ${sdkName}]: Processing ${i + 1}/${cities.length} ${city}\n`
+    const currentLine2 = `[${sdkEmoji} ${sdkName}]: Processing ${i + 1}/${cities.length} ${city} - Starting...\n`
     logsCallback(currentLine1 + currentLine2, true, sdkId)
 
     // 2.2 [TRACK_ATTEMPT]: Mark this city as tried by this SDK
@@ -831,6 +838,11 @@ private async searchBusinessesUsingSDK(
         return true
       })
 
+      // Update progress during email enrichment
+      const enrichingLine1 = `[${sdkEmoji} ${sdkName}]: Progress ${results.length}/${sdkLeadLimit} from ${cities.length} cities (target: ${sdkLeadLimit} leads): ${cities.slice(0, 3).join(', ')}...\n`
+      const enrichingLine2 = `[${sdkEmoji} ${sdkName}]: Processing ${i + 1}/${cities.length} ${city} - Enriching ${filteredLeads.length} leads...\n`
+      logsCallback(enrichingLine1 + enrichingLine2, true, sdkId)
+
       // 2.5 [EMAIL_ENRICHMENT_WITH_TIMEOUT]: Add timeout to email scraping
       const enrichedLeads = await Promise.all(
         filteredLeads.map(async (lead: Lead) => {
@@ -859,7 +871,7 @@ private async searchBusinessesUsingSDK(
       totalUsed += businesses.length
       progressCallback(leadsToAdd.length)
 
-      // 2.7 [UPDATE_PROGRESS]: Update static lines with results
+      // 2.7 [UPDATE_PROGRESS]: Update with final results for this city
       const cityElapsed = Date.now() - cityStartTime
       const expectedLeadsForCity = Math.ceil(sdkLeadLimit / cities.length)
       const updatedLine1 = `[${sdkEmoji} ${sdkName}]: Progress ${results.length}/${sdkLeadLimit} from ${cities.length} cities (target: ${sdkLeadLimit} leads): ${cities.slice(0, 3).join(', ')}...\n`
@@ -915,6 +927,11 @@ private async searchBusinessesUsingSDK(
 
     // 2.8 [RATE_LIMIT_DELAY]: Respect rate limits between requests
     if (i < cities.length - 1 && results.length < sdkLeadLimit) {
+      // Show waiting status
+      const waitingLine1 = `[${sdkEmoji} ${sdkName}]: Progress ${results.length}/${sdkLeadLimit} from ${cities.length} cities (target: ${sdkLeadLimit} leads): ${cities.slice(0, 3).join(', ')}...\n`
+      const waitingLine2 = `[${sdkEmoji} ${sdkName}]: Processing ${i + 1}/${cities.length} - Waiting ${delay}ms before next city...\n`
+      logsCallback(waitingLine1 + waitingLine2, true, sdkId)
+      
       await new Promise(resolve => setTimeout(resolve, delay))
     }
   }
@@ -924,7 +941,7 @@ private async searchBusinessesUsingSDK(
   const redistributionCandidates = [...new Set([...underperformingCities, ...failedCities, ...retriableCities])]
   
   const finalSummaryLine1 = `[${sdkEmoji} ${sdkName}]: Progress ${results.length}/${sdkLeadLimit} from ${cities.length} cities (target: ${sdkLeadLimit} leads): ${cities.slice(0, 3).join(', ')}...\n`
-  const finalSummaryLine2 = `[${sdkEmoji} ${sdkName}]: Finished - ${results.length}/${sdkLeadLimit} leads found in ${elapsedSeconds}s ${redistributionCandidates.length > 0 ? `(🔄 ${redistributionCandidates.length} cities for redistribution)` : ''}\n`
+  const finalSummaryLine2 = `[${sdkEmoji} ${sdkName}]: ✅ Finished - ${results.length}/${sdkLeadLimit} leads found in ${elapsedSeconds}s ${redistributionCandidates.length > 0 ? `(🔄 ${redistributionCandidates.length} cities for redistribution)` : ''}\n`
   logsCallback(finalSummaryLine1 + finalSummaryLine2, true, sdkId)
 
   return { 

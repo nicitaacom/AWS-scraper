@@ -8,8 +8,9 @@ You're building a lead scraper Lambda function.
   If SDK1 found 40 leads in 3 cities then exit cities loop
 - If SDK1 requested limit to find 40 leads in 20 cities but not found something in 1 city - deligate this city to other SDK
   If other SDK not found that leads in that city as well - then skip this city
-- If not found any leeds for 1 city within 10 seconds - move on to another city
 - Jobs run **sequentially** (not in parallel) to avoid 429s, track `completed_in_s`, and respect `MAX_RUNTIME_MS`.
+- SDKs run **parallel** in order to increase performance
+- 10s limit for to scrape 1 city using SDK - if not found within 10s - move to another city
 - There is **no parent job** — the chain starts with Job1 and continues auto-chaining:
   - Each job scrapes up to `MAX_LEADS_PER_JOB` (~346 leads in 13 mins).
   - Chain continues until `targetLimit` is reached **or** max allowed jobs cap (`MAX_JOBS_ALLOWED = 1509`) is hit.
@@ -37,6 +38,15 @@ You're building a lead scraper Lambda function.
     If an SDK fails for a city, that city is automatically retried using another SDK that still has available credits.
     Example: If `searchSDK` input ["Berlin","Erkner"] "Erkner" fails, it’s retried on `googleCustomSearchSDK` or `serpSDK`, depending on availability.
  9. If some SDK require more delay due to 429 - then update delay in this.searchBusinessesUsingSDK
+
+**Code considerations**:
+1. TypeScript noImplicitAny:true - fully annotating all parameters (including callbacks) and return types.
+2. If some function is long and requires a lot of steps - use comments e.g // 1. Do smth first // 2. Do smth second
+3. Write code in 1 line where possible - spread out if possible using ...
+4. Keep code DRY SOLID KISS
+5. If function fails (error) - return string with error message and then check in high-level function returned typeof === 'string' then throw Error 
+6. If any TODO of FIX in code you need to fix it or do something that is written in commented TODO line
+
 
 **Response behavior**:
 - Return early with status `202` if task has been continued in next job (add payload in executionLogs for each job task)
@@ -120,35 +130,6 @@ You're building a lead scraper Lambda function.
     }
   }
   ```
-
-
-**Code considerations**:
-1. TypeScript noImplicitAny:true - fully annotating all parameters (including callbacks) and return types.
-2. If some function is long and requires a lot of steps - use comments e.g // 1. Do smth first // 2. Do smth second
-3. Write code in 1 line where possible - spread out if possible using ...
-4. Keep code DRY SOLID KISS
-5. If function fails (error) - return string with error message and then check in high-level function returned typeof === 'string' then throw Error 
-6. If any TODO of FIX in code you need to fix it or do something that is written in commented TODO line
-  ### 📜 Logging & Job Visibility
-
-  - `executionLogs` is the **single source of truth** for job progress and user-visible logs.
-  - All important events (job started, scraped X leads, retries, errors, completion, etc.) are written to `executionLogs`.
-  - This gives users full transparency and allows UIs to display real-time status updates.
-
-  ### 🛠 Debug Logging
-
-  - `console.log / warn / error` should only be used for **internal debugging** during local dev or advanced tracing — **not for anything user-facing**.
-  - To simplify code and avoid split log sources, use an `IS_DEBUGGING` flag.
-    - If `IS_DEBUGGING = true`, internal debug info is also written into `executionLogs`, prefixed/styled as:
-      ```txt
-      [debug] Puppeteer launched with args: [...]
-      [debug] Fetch attempt 2 from Google SDK
-      ```
-    - If `IS_DEBUGGING = false`, those debug logs are excluded from `executionLogs`.
-
-  This approach keeps code concise, maintains a single log stream (`executionLogs`), and avoids messy `console.*` in prod Lambda environments.
-
-
 
 
 

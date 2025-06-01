@@ -190,9 +190,40 @@ const handler = async (event) => {
         if (IS_DEBUGGING)
             executionLogs += `[debug] Target for this job: ${targetForThisJob}, Cities to process: ${citiesToScrape.slice(0, 5).join(', ')}\n`;
         const scrapeStart = Date.now();
-        const leads = await scraper.scrapeLeads(keyword, citiesToScrape, targetForThisJob, existingLeads, (count) => { currentLeadsCount = count; }, (logs) => {
-            const baseLog = executionLogs.split('🔍 Job')[0] + `🔍 Job${jobNumber} - Starting lead scraping for ${citiesToScrape.length} cities...\n`;
-            executionLogs = baseLog + logs;
+        // Get available SDKs count for progress display
+        const availableSDKsCount = Object.keys(sdks).filter(sdk => availableSDKNames.includes(sdk)).length;
+        // Track SDK progress lines separately
+        const sdkProgressLines = new Map();
+        let overallProgressLine = "";
+        let totalFoundLeads = existingLeads.length;
+        let totalProcessedCities = 0;
+        const totalCities = citiesToScrape.length;
+        // Initialize overall progress
+        const updateOverallProgress = () => {
+            const elapsed = Math.round((Date.now() - scrapeStart) / 1000);
+            overallProgressLine = `🔍 Job${jobNumber} - ${availableSDKsCount} SDKs running - ${totalFoundLeads}/${limit} leads found from ${totalProcessedCities}/${totalCities} cities in ${elapsed}s\n`;
+        };
+        const leads = await scraper.scrapeLeads(keyword, citiesToScrape, targetForThisJob, existingLeads, (count) => {
+            totalFoundLeads = existingLeads.length + count;
+            updateOverallProgress();
+        }, (logs, update = false, sdkId) => {
+            if (sdkId) {
+                // Update specific SDK progress line
+                sdkProgressLines.set(sdkId, logs);
+                // Update overall progress
+                updateOverallProgress();
+                // Combine overall progress + all SDK progress lines + base logs
+                const baseLog = executionLogs.split('🔍 Job')[0] + overallProgressLine;
+                const allSDKLogs = Array.from(sdkProgressLines.values()).join('');
+                const otherLogs = logs.includes('🔄') || logs.includes('✅') || logs.includes('⚠️') ? logs : '';
+                executionLogs = baseLog + allSDKLogs + otherLogs;
+            }
+            else {
+                // Handle non-SDK specific logs (like redistribution, completion messages)
+                const baseLog = executionLogs.split('🔍 Job')[0] + overallProgressLine;
+                const allSDKLogs = Array.from(sdkProgressLines.values()).join('');
+                executionLogs = baseLog + allSDKLogs + logs;
+            }
         }, sdks);
         const scrapeTime = Math.round((Date.now() - scrapeStart) / 1000);
         const newLeadsFound = leads.length - existingLeads.length;
