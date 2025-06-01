@@ -8,6 +8,7 @@ You're building a lead scraper Lambda function.
   If SDK1 found 40 leads in 3 cities then exit cities loop
 - If SDK1 requested limit to find 40 leads in 20 cities but not found something in 1 city - deligate this city to other SDK
   If other SDK not found that leads in that city as well - then skip this city
+- If not found any leeds for 1 city within 10 seconds - move on to another city
 - Jobs run **sequentially** (not in parallel) to avoid 429s, track `completed_in_s`, and respect `MAX_RUNTIME_MS`.
 - There is **no parent job** — the chain starts with Job1 and continues auto-chaining:
   - Each job scrapes up to `MAX_LEADS_PER_JOB` (~346 leads in 13 mins).
@@ -35,6 +36,7 @@ You're building a lead scraper Lambda function.
  8. 🧠 Scraping logic: Allocates an even number of unique cities to each SDK based on its remaining usage limits.  
     If an SDK fails for a city, that city is automatically retried using another SDK that still has available credits.
     Example: If `searchSDK` input ["Berlin","Erkner"] "Erkner" fails, it’s retried on `googleCustomSearchSDK` or `serpSDK`, depending on availability.
+ 9. If some SDK require more delay due to 429 - then update delay in this.searchBusinessesUsingSDK
 
 **Response behavior**:
 - Return early with status `202` if task has been continued in next job (add payload in executionLogs for each job task)

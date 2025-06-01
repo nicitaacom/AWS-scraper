@@ -762,6 +762,9 @@ private async searchBusinessesUsingSDK(
   const sdkEmoji = this.SDK_EMOJIS[sdkName] || '🤖'
   const sdkId = `${sdkName}_progress`
 
+  // City-level timeout - 10 seconds max per city
+  const CITY_TIMEOUT_MS = 10000
+
   const delay = { 
     hunterSDK: 2000, 
     foursquareSDK: 500, 
@@ -776,7 +779,7 @@ private async searchBusinessesUsingSDK(
   
   logsCallback(progressLine1 + progressLine2, false, sdkId)
 
-  // ------ 2. Process each city with smart tracking ------ //
+  // ------ 2. Process each city with smart tracking and timeouts ------ //
   for (let i = 0; i < cities.length; i++) {
     // 2.1 [EARLY_EXIT_CHECK]: Stop if SDK reached its target
     if (results.length >= sdkLeadLimit) {
@@ -791,6 +794,7 @@ private async searchBusinessesUsingSDK(
     }
 
     const city = cities[i]
+    const cityStartTime = Date.now()
     
     // Update static progress lines
     const currentLine1 = `[${sdkEmoji} ${sdkName}]: Progress ${results.length}/${sdkLeadLimit} from ${cities.length} cities (target: ${sdkLeadLimit} leads): ${cities.slice(0, 3).join(', ')}...\n`
@@ -802,10 +806,11 @@ private async searchBusinessesUsingSDK(
     triedSDKs.get(city)!.add(sdkName)
 
     try {
+      // 2.3 [CITY_LEVEL_TIMEOUT]: Wrap the entire city processing in timeout
       const businesses = await this.withTimeout(
         sdk.searchBusinesses(keyword, city, leadsPerCity),
-        30000,
-        `Timeout after 30s for ${sdkName} in ${city}`
+        CITY_TIMEOUT_MS,
+        `City timeout: ${city} took longer than ${CITY_TIMEOUT_MS/1000}s`
       )
 
       if (typeof businesses === "string") throw new Error(businesses)
@@ -813,12 +818,12 @@ private async searchBusinessesUsingSDK(
       if (!businesses || businesses.length === 0) {
         permanentFailures.push(city)
         const noLeadsLine1 = `[${sdkEmoji} ${sdkName}]: Progress ${results.length}/${sdkLeadLimit} from ${cities.length} cities (target: ${sdkLeadLimit} leads): ${cities.slice(0, 3).join(', ')}...\n`
-        const noLeadsLine2 = `[${sdkEmoji} ${sdkName}]: Processing ${i + 1}/${cities.length} ${city} - No leads found\n`
+        const noLeadsLine2 = `[${sdkEmoji} ${sdkName}]: Processing ${i + 1}/${cities.length} ${city} - No leads found (${Date.now() - cityStartTime}ms)\n`
         logsCallback(noLeadsLine1 + noLeadsLine2, true, sdkId)
         continue
       }
 
-      // 2.3 [FILTER_AND_ENRICH]: Process valid leads
+      // 2.4 [FILTER_AND_ENRICH]: Process valid leads
       const filteredLeads = businesses.filter((lead: Lead) => {
         const key = `${lead.company}-${lead.address}`.toLowerCase().trim()
         if (seenCompanies.has(key)) return false
@@ -826,19 +831,27 @@ private async searchBusinessesUsingSDK(
         return true
       })
 
+      // 2.5 [EMAIL_ENRICHMENT_WITH_TIMEOUT]: Add timeout to email scraping
       const enrichedLeads = await Promise.all(
         filteredLeads.map(async (lead: Lead) => {
           if (!lead.email && lead.website) {
             try {
-              const { email } = await scrapeContactsFromWebsite(lead.website)
-              if (email) lead.email = email
-            } catch {}
+              // Timeout email scraping to 3 seconds max
+              const emailResult = await this.withTimeout(
+                scrapeContactsFromWebsite(lead.website),
+                3000,
+                `Email scraping timeout for ${lead.website}`
+              )
+              if (emailResult?.email) lead.email = emailResult.email
+            } catch (emailError) {
+              // Silent fail for email enrichment - don't block the main process
+            }
           }
           return lead
         })
       )
 
-      // 2.4 [SMART_LEAD_ALLOCATION]: Only add leads up to SDK's allocated limit
+      // 2.6 [SMART_LEAD_ALLOCATION]: Only add leads up to SDK's allocated limit
       const remainingSlots = sdkLeadLimit - results.length
       const leadsToAdd = enrichedLeads.slice(0, remainingSlots)
       
@@ -846,16 +859,17 @@ private async searchBusinessesUsingSDK(
       totalUsed += businesses.length
       progressCallback(leadsToAdd.length)
 
-      // 2.5 [UPDATE_PROGRESS]: Update static lines with results
+      // 2.7 [UPDATE_PROGRESS]: Update static lines with results
+      const cityElapsed = Date.now() - cityStartTime
       const expectedLeadsForCity = Math.ceil(sdkLeadLimit / cities.length)
       const updatedLine1 = `[${sdkEmoji} ${sdkName}]: Progress ${results.length}/${sdkLeadLimit} from ${cities.length} cities (target: ${sdkLeadLimit} leads): ${cities.slice(0, 3).join(', ')}...\n`
       
       if (leadsToAdd.length < expectedLeadsForCity * 0.7) {
         underperformingCities.push(city)
-        const updatedLine2 = `[${sdkEmoji} ${sdkName}]: Processing ${i + 1}/${cities.length} ${city} - Found ${leadsToAdd.length} leads (expected ~${expectedLeadsForCity}) - marking for redistribution\n`
+        const updatedLine2 = `[${sdkEmoji} ${sdkName}]: Processing ${i + 1}/${cities.length} ${city} - Found ${leadsToAdd.length} leads in ${cityElapsed}ms (expected ~${expectedLeadsForCity}) - marking for redistribution\n`
         logsCallback(updatedLine1 + updatedLine2, true, sdkId)
       } else {
-        const updatedLine2 = `[${sdkEmoji} ${sdkName}]: Processing ${i + 1}/${cities.length} ${city} - Found ${leadsToAdd.length} leads ✅\n`
+        const updatedLine2 = `[${sdkEmoji} ${sdkName}]: Processing ${i + 1}/${cities.length} ${city} - Found ${leadsToAdd.length} leads in ${cityElapsed}ms ✅\n`
         logsCallback(updatedLine1 + updatedLine2, true, sdkId)
       }
 
@@ -868,10 +882,11 @@ private async searchBusinessesUsingSDK(
       }
 
     } catch (error: any) {
-      // ------ 3. Handle processing errors ------ //
+      // ------ 3. Handle processing errors with timeout awareness ------ //
+      const cityElapsed = Date.now() - cityStartTime
       const scrapingError = this.categorizeError(error, city, sdkName)
       const errorLine1 = `[${sdkEmoji} ${sdkName}]: Progress ${results.length}/${sdkLeadLimit} from ${cities.length} cities (target: ${sdkLeadLimit} leads): ${cities.slice(0, 3).join(', ')}...\n`
-      const errorLine2 = `[${sdkEmoji} ${sdkName}]: Processing ${i + 1}/${cities.length} ${city} - Error: ${scrapingError.type}: ${scrapingError.message}\n`
+      const errorLine2 = `[${sdkEmoji} ${sdkName}]: Processing ${i + 1}/${cities.length} ${city} - ${scrapingError.type}: ${scrapingError.message} (${cityElapsed}ms)\n`
       logsCallback(errorLine1 + errorLine2, true, sdkId)
 
       switch (scrapingError.type) {
@@ -879,18 +894,26 @@ private async searchBusinessesUsingSDK(
           permanentFailures.push(city)
           break
         case 'RATE_LIMITED': 
-          if (scrapingError.retryable) retriableCities.push(city)
+          if (scrapingError.retryable) {
+            retriableCities.push(city)
+            // If we hit rate limit, add extra delay before next city
+            await new Promise(resolve => setTimeout(resolve, delay * 2))
+          }
           break
         case 'TIMEOUT':
+          // For city-level timeouts, mark for redistribution to other SDKs
+          failedCities.push(city)
+          break
         case 'API_ERROR': 
           if (scrapingError.retryable) failedCities.push(city)
           break
         default: 
+          // For unknown errors, try redistribution
           failedCities.push(city)
       }
     }
 
-    // 2.6 [RATE_LIMIT_DELAY]: Respect rate limits between requests
+    // 2.8 [RATE_LIMIT_DELAY]: Respect rate limits between requests
     if (i < cities.length - 1 && results.length < sdkLeadLimit) {
       await new Promise(resolve => setTimeout(resolve, delay))
     }
@@ -1144,8 +1167,8 @@ private categorizeError(error: any, city: string, sdkName: string): ScrapingErro
       sdkName,
       statusCode,
       retryable: true
+    }
   }
-}
 
   // 1.3 [5XX_SERVER_ERROR]: Server-side issues
   if (statusCode >= 500 && statusCode < 600) {
@@ -1161,11 +1184,24 @@ private categorizeError(error: any, city: string, sdkName: string): ScrapingErro
 
   // ------ 2. Message-Based Categorization ------ //
   
-  // 2.1 [TIMEOUT_ERRORS]: Network and timeout issues
+  // 2.1 [CITY_TIMEOUT]: Our custom city-level timeout
+  if (message.includes('City timeout:') || message.includes('took longer than')) {
+    return {
+      type: 'TIMEOUT',
+      message: `City processing timeout - ${city} exceeded 10s limit`,
+      city,
+      sdkName,
+      retryable: true
+    }
+  }
+  
+  // 2.2 [TIMEOUT_ERRORS]: Network and timeout issues
   if (message.toLowerCase().includes('timeout') || 
       message.toLowerCase().includes('econnreset') ||
       message.toLowerCase().includes('network') ||
-      message.toLowerCase().includes('connection refused')) {
+      message.toLowerCase().includes('connection refused') ||
+      message.toLowerCase().includes('etimedout') ||
+      message.toLowerCase().includes('socket hang up')) {
     return {
       type: 'TIMEOUT',
       message: `Network timeout for ${city}`,
@@ -1175,7 +1211,7 @@ private categorizeError(error: any, city: string, sdkName: string): ScrapingErro
     }
   }
 
-  // 2.2 [RAPIDAPI_SPECIFIC]: Handle RapidAPI error patterns
+  // 2.3 [RAPIDAPI_SPECIFIC]: Handle RapidAPI error patterns
   if (message.includes('RapidAPI')) {
     if (message.includes('404')) {
       return {
@@ -1200,7 +1236,7 @@ private categorizeError(error: any, city: string, sdkName: string): ScrapingErro
     }
   }
 
-  // 2.3 [NO_RESULTS]: Explicit "no results" messages
+  // 2.4 [NO_RESULTS]: Explicit "no results" messages
   if (message.toLowerCase().includes('no results') ||
       message.toLowerCase().includes('no businesses') ||
       message.toLowerCase().includes('not found')) {
@@ -1210,6 +1246,17 @@ private categorizeError(error: any, city: string, sdkName: string): ScrapingErro
       city,
       sdkName,
       retryable: false
+    }
+  }
+
+  // 2.5 [EMAIL_SCRAPING_TIMEOUT]: Email enrichment timeouts (silent)
+  if (message.includes('Email scraping timeout')) {
+    return {
+      type: 'TIMEOUT',
+      message: `Email enrichment timeout`,
+      city,
+      sdkName,
+      retryable: false // Don't retry email scraping failures
     }
   }
 
