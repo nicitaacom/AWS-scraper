@@ -9,13 +9,13 @@ const client_s3_1 = require("@aws-sdk/client-s3");
 const supabase_js_1 = require("@supabase/supabase-js");
 const openai_1 = __importDefault(require("openai"));
 const pusher_1 = require("../libs/pusher");
-const FoursquareSDK_1 = require("../SDK/FoursquareSDK");
+// import { FoursquareSDK } from "../SDK/don't use/FoursquareSDK";
 const GoogleCustomSearchSDK_1 = require("../SDK/GoogleCustomSearchSDK");
 const HunterSDK_1 = require("../SDK/HunterSDK");
 // import { OpenCorporatesSDK } from "../SDK/OpenCorporatesSDK";
 const SearchSDK_1 = require("../SDK/SearchSDK");
 const SerpSDK_1 = require("../SDK/SerpSDK");
-const TomTomSDK_1 = require("../SDK/TomTomSDK");
+// import { TomTomSDK } from "../SDK/TomTomSDK";
 const RapidSDK_1 = require("../SDK/RapidSDK");
 // import { ApifyContactInfoSDK } from "../SDK/doesn't work/ApifyContactInfoSDK";
 // import { ScrapingBeeSDK } from "../SDK/doesn't work/ScrapingBeeSDK";
@@ -44,13 +44,13 @@ function initializeClients() {
             pusher: new pusher_1.TypedPusher({ appId, key, secret, cluster: "eu", useTLS: true }),
             openai: new openai_1.default({ apiKey: process.env.OPENAI_KEY }),
             // duckduckGoSDK:new DuckDuckGoSDK(), // this DOES NOT WORK (tweacked 3 times with AI)
-            foursquareSDK: new FoursquareSDK_1.FoursquareSDK(process.env.FOURSQUARE_API_KEY),
+            // foursquareSDK: new FoursquareSDK(process.env.FOURSQUARE_API_KEY),
             googleCustomSearchSDK: new GoogleCustomSearchSDK_1.GoogleCustomSearchSDK(process.env.GOOGLE_CUSTOM_SEARCH_API_KEY, process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID),
             hunterSDK: new HunterSDK_1.HunterSDK(process.env.HUNTER_API_KEY),
             // openCorporatesSDK: new OpenCorporatesSDK(),
             searchSDK: new SearchSDK_1.SearchSDK(process.env.SEARCH_API_KEY),
             serpSDK: new SerpSDK_1.SerpSDK(process.env.SERP_API_KEY),
-            tomtomSDK: new TomTomSDK_1.TomTomSDK(process.env.TOM_TOM_API_KEY),
+            // tomtomSDK: new TomTomSDK(process.env.TOM_TOM_API_KEY),
             // apifyContactInfoSDK: new ApifyContactInfoSDK(process.env.APIFY_API_KEY),
             // scrapingBeeSDK: new ScrapingBeeSDK(process.env.SCRAPING_BEE_API_KEY),
             rapidSDK: new RapidSDK_1.RapidSDK(process.env.RAPID_API_KEY),

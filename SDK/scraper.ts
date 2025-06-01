@@ -9,13 +9,11 @@ import { checkSDKAvailability } from "../utils/checkSDKAvailability";
 import { scrapeContactsFromWebsite } from "../utils/scrapeContactsFromWebsite";
 
 interface SDKs {
-  foursquareSDK: string
   googleCustomSearchSDK: string
   hunterSDK: string
   rapidSDK:string
   searchSDK: string
   serpSDK: string
-  tomtomSDK: string
   [index: string]: string
 }
 
@@ -45,13 +43,11 @@ export class Scraper {
     protected lambda: LambdaClient,
     protected AWS_LAMBDA_FUNCTION_NAME = process.env.AWS_LAMBDA_FUNCTION_NAME || "lead-scraper",
     protected SDK_EMOJIS: SDKs = {
-      foursquareSDK: '📍',
       googleCustomSearchSDK: '🌐',
       hunterSDK: '🕵️',
       rapidSDK: '⚡',
       searchSDK: '🔎',
       serpSDK: '📊',
-      tomtomSDK: '🗺️',
     },
     private readonly SDK_PERSONALITIES: Record<string, SDKPersonality> = {
       hunterSDK: {

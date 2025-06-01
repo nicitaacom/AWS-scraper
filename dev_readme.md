@@ -313,12 +313,10 @@ Make sure phone numbers does not include spaces slashes dashes or any other symb
 
 SDK in use:
 ```sql
-   ('foursquareSDK',         'fixed',   20000, NULL),               -- credit-based (manual reset)
     ('googleCustomSearchSDK', 'monthly', 10000, INTERVAL '30 days'),
     ('hunterSDK',             'monthly', 25,    INTERVAL '30 days'),
     ('searchSDK',             'monthly', 100,   INTERVAL '30 days'),
     ('serpSDK',               'monthly', 100,   INTERVAL '30 days'),
-    ('tomtomSDK',             'daily',   2500,  INTERVAL '1 day'),
     ('rapidAPI',              'monthly', 500000, INTERVAL '30 days')
 ```
 DO NOT USE list:
@@ -331,7 +329,8 @@ DO NOT USE list:
  6. PuppeteerGoogleMapsSDK because it's Runtime.OutOfMemory and max size is 50MB (86MB)
  6. OutscraperSDK because it required to link card and also it will charge for outside free limit but I want to disable any charges
  7. ParseHub - outdated shi* with empty UI https://i.imgur.com/kKbRqZ6.png and also I need to download some... - too complicated
- 
+ 8. foursquareSDK - don't provide email or phone or website
+ 9. tomtomSDK - don't provide email or phone or website
 Need check (still don't use - it's just waste of time): 
  8. duckduckGoSDK - it's just doesn't work - tweacked 3 times with AI - still not working
  9. apifyContactInfoSDK (limit 500/m) because error - URLs array is required - https://i.imgur.com/wouc617.png

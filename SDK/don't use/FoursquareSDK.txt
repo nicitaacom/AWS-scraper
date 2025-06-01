@@ -1,6 +1,6 @@
 import fetch from "node-fetch"
-import { Lead } from "../interfaces/interfaces"
-import { scrapeContactsFromWebsite } from "../utils/scrapeContactsFromWebsite"
+import { Lead } from "../../interfaces/interfaces"
+import { scrapeContactsFromWebsite } from "../../utils/scrapeContactsFromWebsite"
 
 /**
  * Foursquare Places API SDK - Enhanced for High-Volume City Processing
